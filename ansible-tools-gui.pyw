@@ -201,12 +201,24 @@ GitHub: https://github.com/your-repo/ansible-tools
         ttk.Label(top_frame, text="Model:").pack(side=tk.LEFT, padx=5)
         model_combo = ttk.Combobox(top_frame, textvariable=self.model, state='readonly', width=40)
         model_combo['values'] = (
+            '--- CodeLlama ---',
             'codellama:7b (Fast, ~4GB RAM)',
             'codellama:13b (Balanced, ~8GB RAM)',
             'codellama:34b (Best Quality, ~20GB RAM)',
-            'codellama:70b (Highest Quality, ~40GB RAM)'
+            'codellama:70b (Highest Quality, ~40GB RAM)',
+            '--- DeepSeek Coder ---',
+            'deepseek-coder:1.3b (Tiny, ~1GB RAM)',
+            'deepseek-coder:6.7b (Fast, ~4GB RAM)',
+            'deepseek-coder:33b (Large, ~20GB RAM)',
+            '--- Qwen2.5 Coder ---',
+            'qwen2.5-coder:0.5b (Tiny, ~500MB RAM)',
+            'qwen2.5-coder:1.5b (Tiny, ~1GB RAM)',
+            'qwen2.5-coder:3b (Small, ~2GB RAM)',
+            'qwen2.5-coder:7b (Balanced, ~4GB RAM)',
+            'qwen2.5-coder:14b (Large, ~8GB RAM)',
+            'qwen2.5-coder:32b (Very Large, ~20GB RAM)'
         )
-        model_combo.current(1)
+        model_combo.current(2)  # Default to codellama:13b
         model_combo.pack(side=tk.LEFT, padx=5)
         
         # Service selection
@@ -296,12 +308,34 @@ GitHub: https://github.com/your-repo/ansible-tools
                 self.input_text.insert(1.0, content)
     
     def get_model_value(self):
-        model_str = self.model.get()
-        if '7b' in model_str.lower():
+        model_str = self.model.get().lower()
+        # Skip separator lines
+        if model_str.startswith('---'):
+            return 'codellama:13b'
+        # Extract model name from display string
+        if 'deepseek-coder:1.3b' in model_str:
+            return 'deepseek-coder:1.3b'
+        elif 'deepseek-coder:6.7b' in model_str:
+            return 'deepseek-coder:6.7b'
+        elif 'deepseek-coder:33b' in model_str:
+            return 'deepseek-coder:33b'
+        elif 'qwen2.5-coder:0.5b' in model_str:
+            return 'qwen2.5-coder:0.5b'
+        elif 'qwen2.5-coder:1.5b' in model_str:
+            return 'qwen2.5-coder:1.5b'
+        elif 'qwen2.5-coder:3b' in model_str:
+            return 'qwen2.5-coder:3b'
+        elif 'qwen2.5-coder:7b' in model_str:
+            return 'qwen2.5-coder:7b'
+        elif 'qwen2.5-coder:14b' in model_str:
+            return 'qwen2.5-coder:14b'
+        elif 'qwen2.5-coder:32b' in model_str:
+            return 'qwen2.5-coder:32b'
+        elif 'codellama:7b' in model_str:
             return 'codellama:7b'
-        elif '34b' in model_str.lower():
+        elif 'codellama:34b' in model_str:
             return 'codellama:34b'
-        elif '70b' in model_str.lower():
+        elif 'codellama:70b' in model_str:
             return 'codellama:70b'
         else:
             return 'codellama:13b'

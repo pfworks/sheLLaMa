@@ -34,7 +34,16 @@ MODEL_SIZES = {
     'codellama:7b': 1,
     'codellama:13b': 2,
     'codellama:34b': 3,
-    'codellama:70b': 4
+    'codellama:70b': 4,
+    'deepseek-coder:1.3b': 1,
+    'deepseek-coder:6.7b': 2,
+    'deepseek-coder:33b': 3,
+    'qwen2.5-coder:0.5b': 1,
+    'qwen2.5-coder:1.5b': 1,
+    'qwen2.5-coder:3b': 1,
+    'qwen2.5-coder:7b': 2,
+    'qwen2.5-coder:14b': 3,
+    'qwen2.5-coder:32b': 3
 }
 
 # Track backend availability and queue size

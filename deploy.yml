@@ -77,17 +77,17 @@
       become_user: "{{ app_user }}"
       become: no
 
-    - name: Pull Ollama models
-      command: ollama pull {{ item }}
-      loop:
-        - codellama:7b
-        - codellama:13b
-        - codellama:34b
-        - codellama:70b
-      async: 3600
-      poll: 30
-      become_user: "{{ app_user }}"
-      become: no
+#    - name: Pull Ollama models
+#      command: ollama pull {{ item }}
+#      loop:
+#        - codellama:7b
+#        - codellama:13b
+#        - codellama:34b
+#        - codellama:70b
+#      async: 3600
+#      poll: 30
+#      become_user: "{{ app_user }}"
+#      become: no
 
     - name: Copy app.py
       copy:
