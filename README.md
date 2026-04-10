@@ -1,15 +1,6 @@
-# SheLLama - Complete Guide
+# SheLLama
 
-Local LLM-powered tool for converting shell commands to Ansible playbooks, explaining code, generating code, analyzing files, and generating images. Runs completely offline after initial setup.
-
-## Table of Contents
-- [Features](#features)
-- [System Requirements](#system-requirements)
-- [Quick Start](#quick-start)
-- [Deployment](#deployment)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Troubleshooting](#troubleshooting)
+Local LLM-powered tool for code generation, explanation, shell-to-Ansible conversion, file analysis, chat, and image generation. Agentic shell where the AI can run commands and iterate. Runs completely offline after initial model pull.
 
 ## Features
 
@@ -18,109 +9,216 @@ Local LLM-powered tool for converting shell commands to Ansible playbooks, expla
 - Ansible playbooks → Explanations
 - Descriptions → Code generation
 - Code → Explanations
-- Multi-file analysis
+- Multi-file/directory analysis (parallel across backends)
+- Chat with agentic command execution
 - Text → Image generation (Stable Diffusion)
 
+**Agentic Shell:**
+- AI proposes bash/PowerShell commands, executes them (with confirmation), reads output, iterates up to 10 rounds
+- Quiet mode for scripting (output only, no confirmations)
+- Bash environment snapshot (functions, aliases, variables) inherited by AI commands
+
 **Interfaces:**
-- Web UI with dark mode
-- Python GUI (cross-platform)
-- CLI tool
+- Bash CLI (`shellama`) — Linux/macOS
+- PowerShell CLI (`powershellama.ps1`) — Windows
+- PowerShell GUI (`powershellama-gui.ps1`, `powershellama-gui.cmd`) — Windows
+- Python GUI (`shellama-gui.pyw`) — cross-platform
+- Web UI with dark mode (`index.html`)
+- Admin console: Status, Backends, Stats pages
 - REST API
 
 **Architecture:**
 - Standalone or distributed deployment
-- Load balancing across multiple backends
+- Frontend load balancer with weighted routing
 - Parallel file processing across backends
+- Sequential fallback when only 1 backend available
 - Request queuing with position tracking
-- Optional OpenRouter cloud fallback
+- Cloud fallback via OpenRouter or self-hosted LiteLLM
+- Per-client and per-task usage tracking
+- Persistent stats (survive restarts)
 - Fully offline capable
 
 ## System Requirements
 
 ### Backend Server
-**Minimum (7B models):**
-- CPU: 8 cores
-- RAM: 16GB
-- Storage: 50GB
-- OS: Ubuntu 22.04 LTS, Debian 12, or macOS 12+
-
-**Recommended (13B-14B models):**
-- CPU: 16 cores
-- RAM: 32GB
-- Storage: 100GB
-- OS: Ubuntu 22.04 LTS, Debian 12, or macOS 12+
-
-**Large models (32B-34B):**
-- CPU: 32+ cores
-- RAM: 64GB+
-- Storage: 200GB
-- Not recommended for CPU-only systems
+| Tier | CPU | RAM | Storage | Models |
+|------|-----|-----|---------|--------|
+| Minimum | 8 cores | 16GB | 50GB | 7B (30-60s/response) |
+| Recommended | 16 cores | 32GB | 100GB | 13B-14B (1-3min/response) |
+| Large | 32+ cores | 64GB+ | 200GB | 32B+ (not recommended for CPU) |
 
 ### Frontend Server
-- CPU: 4 cores
-- RAM: 8GB
-- Storage: 20GB
-- OS: Ubuntu 22.04 LTS, Debian 12, or macOS 12+
+- 4 cores, 8GB RAM, 20GB storage
 
-### Client (GUI/CLI)
-- Python 3.8+
-- 2GB RAM
-- Windows, macOS, or Linux
+### Clients
+- Python 3.8+ or PowerShell 5.1+
 
 ## Quick Start
 
-### Standalone Installation (Linux/macOS)
-
-**1. Install Ollama:**
 ```bash
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
+# 1. Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh   # Linux
+brew install ollama                               # macOS
 
-# macOS
-brew install ollama
-```
-
-**2. Pull a model:**
-```bash
+# 2. Pull a model
 ollama pull qwen2.5-coder:7b
-```
 
-**3. Clone and run:**
-```bash
+# 3. Clone and run
 git clone <repo-url>
-cd ansible-tools
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+cd shellama
+python3 -m venv venv && source venv/bin/activate
 pip install flask ollama pyyaml requests
 python app.py
+
+# 4. Access
+# Web UI: http://localhost:5000
+# CLI:    ./shellama
+# GUI:    python3 shellama-gui.pyw
 ```
 
-**4. Access:**
-- Web UI: http://localhost:5000
-- GUI: `python shellama-gui.pyw`
-- CLI: `./shellama chat`
+## CLI Usage
+
+### Bash CLI (`shellama`)
+
+```bash
+export SHELLAMA_API=http://your-server:5000
+export SHELLAMA_MODEL=qwen2.5-coder:7b
+./shellama
+```
+
+The CLI is a full bash shell with AI integration. Regular commands run in bash. Prefix with `,` to talk to the AI.
+
+| Command | Description |
+|---------|-------------|
+| `, <prompt>` | Agentic chat — AI runs commands, iterates up to 10 rounds |
+| `,, <prompt>` | Quiet mode — output only, no confirmations |
+| `,explain <file>` | Explain any file (auto-detects .yml→playbook, other→code) |
+| `,generate <desc>` | Generate code (detects `ansible\|playbook\|shell command`→playbook) |
+| `,analyze <paths>` | Analyze files and/or directories recursively |
+| `,img <prompt>` | Generate image (Stable Diffusion) |
+| `,models` | List and select model |
+| `,tokens` | Show session usage stats |
+| `,quiet` | Toggle quiet mode |
+| `,list` / `,help` | Show available commands |
+
+### PowerShell CLI (`powershellama.ps1`)
+
+```powershell
+$env:SHELLAMA_API = "http://your-server:5000"
+.\powershellama.ps1
+```
+
+Same command set as bash CLI. Agentic loop executes PowerShell commands instead of bash.
+
+### PowerShell GUI (`powershellama-gui.ps1` / `powershellama-gui.cmd`)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File powershellama-gui.ps1
+# Or double-click powershellama-gui.cmd
+```
+
+WinForms GUI with dark mode, Consolas font, agentic loop in terminal pane. Use `,stop` to stop backend processing.
+
+### Python GUI (`shellama-gui.pyw`)
+
+```bash
+export SHELLAMA_API=http://your-server:5000
+python3 shellama-gui.pyw
+```
+
+Cross-platform GUI with dark mode, color themes, multiple fonts, file/directory browser, interactive follow-up questions, error log viewer, persistent settings.
+
+## Web UI
+
+Access at `http://your-server:5000`
+
+Services: Shell→Ansible, Explain Playbook, Generate Code, Explain Code, Chat, Analyze Files, Generate Image.
+
+Features: model selection, dark mode, file upload, copy/save output, queue position display, token statistics.
+
+## Admin Console
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Status | `/status` | Summary: total requests, tokens, active backends, queue size |
+| Backends | `/backends` | Per-backend details: online/offline, CPU/RAM, weight, models, active task |
+| Stats | `/stats` | Charts: queue size and token usage over time (hour/day/week/month/year) |
+
+## REST API
+
+### Core Endpoints
+
+```bash
+# Chat
+curl -X POST http://server:5000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is Ansible?", "model": "qwen2.5-coder:7b"}'
+
+# Shell → Ansible
+curl -X POST http://server:5000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"commands": "apt update\napt install nginx", "model": "qwen2.5-coder:7b"}'
+
+# Explain playbook
+curl -X POST http://server:5000/explain \
+  -H "Content-Type: application/json" \
+  -d '{"playbook": "'"$(cat playbook.yml)"'", "model": "qwen2.5-coder:7b"}'
+
+# Generate code
+curl -X POST http://server:5000/generate-code \
+  -H "Content-Type: application/json" \
+  -d '{"description": "Python CSV parser", "model": "qwen2.5-coder:7b"}'
+
+# Explain code
+curl -X POST http://server:5000/explain-code \
+  -H "Content-Type: application/json" \
+  -d '{"code": "'"$(cat script.py)"'", "model": "qwen2.5-coder:7b"}'
+
+# Analyze files
+curl -X POST http://server:5000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"files": [{"path": "app.py", "content": "..."}], "model": "qwen2.5-coder:7b"}'
+
+# Upload file (shell → ansible)
+curl -X POST http://server:5000/upload \
+  -F "file=@commands.txt" -F "model=qwen2.5-coder:7b"
+
+# Generate image
+curl -X POST http://server:5000/generate-image \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A futuristic server room", "image_model": "sd-turbo", "steps": 4}'
+```
+
+### Status & Control Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/queue-status` | GET | Aggregate queue/backend status, token/request totals |
+| `/models` | GET | List available Ollama models (deduplicated across backends) |
+| `/image-models` | GET | List image generation models |
+| `/ip-tokens` | GET | Token usage history per client IP and per backend |
+| `/queue-history` | GET | Queue size history for graphs |
+| `/usage-stats` | GET | Cumulative usage by client IP and by task type |
+| `/stop` | POST | Stop active task (single backend) |
+| `/stop-all` | POST | Stop all backends (frontend only) |
+| `/stop-backend` | POST | Stop a specific backend (frontend only, takes `{"url": "..."}`) |
 
 ## Deployment
 
-### Distributed Setup (Production)
+### Distributed Setup
 
-**1. Prepare configuration:**
 ```bash
-cd ansible-tools
-
-# Backend inventory
+# 1. Configure
 cat > inventory.ini << EOF
 [servers]
-192.168.1.230 ansible_user=youruser
+192.168.1.230 ansible_user=root
 EOF
 
-# Frontend inventory
 cat > inventory-frontend.ini << EOF
 [frontend]
-192.168.1.229 ansible_user=youruser
+192.168.1.229 ansible_user=root
 EOF
 
-# Backend configuration
 cat > backends.json << EOF
 {
   "backends": [
@@ -128,526 +226,145 @@ cat > backends.json << EOF
   ]
 }
 EOF
-```
 
-**2. Deploy backend:**
-```bash
+# 2. Deploy backend, pull models
 ansible-playbook -i inventory.ini deploy.yml
-```
+ssh root@192.168.1.230 "ollama pull qwen2.5-coder:7b"
 
-**3. Pull models on backend:**
-```bash
-ssh youruser@192.168.1.230
-ollama pull qwen2.5-coder:7b
-```
-
-**4. Deploy frontend:**
-```bash
+# 3. Deploy frontend
 ansible-playbook -i inventory-frontend.ini deploy-frontend.yml
+
+# 4. Access
+# Web UI: http://192.168.1.229:5000
+# Admin:  http://192.168.1.229:5000/status
 ```
-
-**5. Update backends.json on frontend:**
-```bash
-ssh youruser@192.168.1.229
-sudo nano /usr/local/bin/backends.json
-# Update max_model to match what you pulled
-sudo systemctl restart ansible-ollama-frontend
-```
-
-**6. Access:**
-- Web UI: http://192.168.1.229:5000
-- Status: http://192.168.1.229:5000/status.html (includes queue and token graphs with day/week/month/year views)
-
-### macOS-Specific Notes
-
-**Deployment differences:**
-- Uses LaunchDaemon instead of systemd
-- Service file: `com.ooma.ansible-ollama.plist`
-- Homebrew for dependencies
-
-**Manual service management:**
-```bash
-# Load service
-sudo launchctl load /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
-
-# Unload service
-sudo launchctl unload /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
-
-# View logs
-tail -f /var/log/ansible-ollama.log
-```
-
-## Usage
-
-### Web UI
-
-Access at http://your-server:5000
-
-**Features:**
-- Model selection dropdown
-- Dark mode toggle
-- File upload support
-- Copy/save output
-- Queue position display
-- Token statistics
-
-**Services:**
-1. Shell → Ansible: Convert commands to playbooks
-2. Ansible → Explanation: Explain playbooks
-3. Description → Code: Generate code
-4. Code → Explanation: Explain code
-5. Chat: General questions
-6. Analyze Files: Multi-file analysis (supports directories)
-7. Generate Image: Text-to-image generation (Stable Diffusion)
-
-### Python GUI
-
-```bash
-# Set API endpoint
-export SHELLAMA_API=http://192.168.1.229:5000
-
-# Run GUI
-python3 shellama-gui.pyw
-```
-
-**Features:**
-- Cross-platform (Windows, macOS, Linux)
-- Dark mode with color themes
-- Multiple font options
-- File upload (single or multiple)
-- Directory browser for analyzing entire folders
-- Interactive mode for follow-up questions
-- Error log viewer
-- Persistent settings
-
-### CLI Tool
-
-```bash
-# Set API endpoint
-export SHELLAMA_API=http://192.168.1.229:5000
-export SHELLAMA_MODEL=qwen2.5-coder:7b
-
-# Convert shell commands
-shellama shell2ansible commands.txt > playbook.yml
-
-# Explain playbook
-shellama explain playbook.yml
-
-# Generate code
-shellama generate description.txt > script.py
-
-# Explain code
-shellama explain script.py
-
-# Analyze files
-shellama analyze file1.py file2.yml file3.txt
-
-# Analyze entire directory (recursively)
-shellama analyze /path/to/directory
-
-# Mix files and directories
-shellama analyze file1.py /path/to/directory file2.yml
-
-# Interactive analysis with follow-up questions
-shellama analyze playbook.yml
-
-# Interactive chat
-shellama chat
-
-# Interactive mode
-shellama
-```
-
-### REST API
-
-**Generate playbook:**
-```bash
-curl -X POST http://your-server:5000/generate \
-  -H "Content-Type: application/json" \
-  -d '{"commands": "apt update\napt install nginx", "model": "qwen2.5-coder:7b"}'
-```
-
-**Explain playbook:**
-```bash
-curl -X POST http://your-server:5000/explain \
-  -H "Content-Type: application/json" \
-  -d '{"playbook": "'"$(cat playbook.yml)"'", "model": "qwen2.5-coder:7b"}'
-```
-
-**Generate code:**
-```bash
-curl -X POST http://your-server:5000/generate-code \
-  -H "Content-Type: application/json" \
-  -d '{"description": "Python script to parse CSV", "model": "qwen2.5-coder:7b"}'
-```
-
-**Explain code:**
-```bash
-curl -X POST http://your-server:5000/explain-code \
-  -H "Content-Type: application/json" \
-  -d '{"code": "'"$(cat script.py)"'", "model": "qwen2.5-coder:7b"}'
-```
-
-**Analyze files:**
-```bash
-curl -X POST http://your-server:5000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"files": [{"path": "app.py", "content": "..."}], "model": "qwen2.5-coder:7b"}'
-```
-
-**Chat:**
-```bash
-curl -X POST http://your-server:5000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "What is Ansible?", "model": "qwen2.5-coder:7b"}'
-```
-
-**Queue status:**
-```bash
-curl http://your-server:5000/queue-status
-```
-
-**Generate image:**
-```bash
-curl -X POST http://your-server:5000/generate-image \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "A futuristic server room", "image_model": "sd-turbo", "steps": 4, "width": 512, "height": 512}'
-```
-
-**List image models:**
-```bash
-curl http://your-server:5000/image-models
-```
-
-## Configuration
-
-### Model Selection
-
-**Recommended models for CPU:**
-- `qwen2.5-coder:7b` - Best balance (30-60s response)
-- `deepseek-coder:6.7b` - Alternative (30-60s response)
-- `codellama:13b` - Original (1-3min response)
-- `qwen2.5-coder:3b` - Fast (10-30s response)
-
-**Pull models:**
-```bash
-ollama pull qwen2.5-coder:7b
-ollama list  # View installed models
-```
-
-### Offline Mode
-
-**Disable internet after setup:**
-```bash
-ssh youruser@192.168.1.230
-sudo systemctl edit ansible-ollama
-```
-
-Add:
-```ini
-[Service]
-Environment="USE_CLOUD_FALLBACK=false"
-```
-
-Restart:
-```bash
-sudo systemctl restart ansible-ollama
-```
-
-### OpenRouter Cloud Fallback (Optional)
-
-Falls back to cloud models (Claude, GPT-4, Llama, etc.) via OpenRouter when local Ollama produces low-quality output.
-
-**Enable OpenRouter fallback:**
-```bash
-ssh youruser@192.168.1.230
-sudo systemctl edit ansible-ollama
-```
-
-Add:
-```ini
-[Service]
-Environment="OPENROUTER_API_KEY=your-openrouter-api-key"
-Environment="OPENROUTER_MODEL=anthropic/claude-3.5-sonnet"
-Environment="USE_CLOUD_FALLBACK=true"
-```
-
-Restart:
-```bash
-sudo systemctl restart ansible-ollama
-```
-
-**Available models via OpenRouter:**
-- `anthropic/claude-3.5-sonnet` - Default, high quality
-- `openai/gpt-4o` - OpenAI GPT-4o
-- `meta-llama/llama-3-70b-instruct` - Open source, fast
-- `google/gemini-pro-1.5` - Google Gemini
-- See [openrouter.ai/models](https://openrouter.ai/models) for full list
 
 ### Load Balancing
-
-**Add multiple backends:**
-```bash
-ssh youruser@192.168.1.229
-sudo nano /usr/local/bin/backends.json
-```
 
 ```json
 {
   "backends": [
     {"url": "http://192.168.1.230:5000", "weight": 10, "max_model": "qwen2.5-coder:7b"},
-    {"url": "http://192.168.1.231:5000", "weight": 5, "max_model": "qwen2.5-coder:14b"}
+    {"url": "http://192.168.1.233:5000", "weight": 10, "max_model": "qwen2.5-coder:14b"}
   ]
 }
 ```
 
-**Weight logic:**
-- Higher weight = higher priority
-- Score = queue_size - (weight * 0.1)
-- Backend with lowest score is selected
+- Higher weight = higher priority. Score = `queue_size - (weight * 0.1)`, lowest wins.
+- Multi-file analysis runs in parallel across backends, or sequentially if only 1 backend available.
+- Model size filtering: requested model must be ≤ backend's `max_model`.
 
-Restart frontend:
-```bash
-sudo systemctl restart ansible-ollama-frontend
+### Cloud Fallback
+
+Two options for fallback when local models produce poor output:
+
+**OpenRouter (cloud):**
+```ini
+[Service]
+Environment="OPENROUTER_API_KEY=sk-or-v1-your-key"
+Environment="OPENROUTER_MODEL=anthropic/claude-3.5-sonnet"
+Environment="USE_CLOUD_FALLBACK=true"
 ```
 
-### Firewall
-
-**Linux (ufw):**
-```bash
-sudo ufw allow 5000/tcp
+**LiteLLM (self-hosted):**
+```ini
+[Service]
+Environment="OPENROUTER_API_KEY=sk-anything"
+Environment="OPENROUTER_MODEL=fallback"
+Environment="OPENROUTER_URL=http://litellm-host:4000/v1/chat/completions"
+Environment="USE_CLOUD_FALLBACK=true"
 ```
 
-**macOS:**
+See `openrouter-setup.md` for full setup guide including LiteLLM configuration.
+
+### macOS Notes
+
+Uses LaunchDaemon instead of systemd:
 ```bash
-# System Preferences → Security & Privacy → Firewall → Firewall Options
-# Add Python to allowed applications
+sudo launchctl load /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
+sudo launchctl unload /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
+tail -f /var/log/ansible-ollama.log
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SHELLAMA_API` | `http://192.168.1.229:5000` | API endpoint |
+| `SHELLAMA_MODEL` | `qwen2.5-coder:7b` | Default model |
+| `AI_IMAGE_MODEL` | `sd-turbo` | Image generation model |
+| `AI_PS1` | (bash PS1) | Custom prompt (bash CLI only) |
+| `AI_QUIET` | `false` | Start in quiet mode (bash CLI only) |
+| `OPENROUTER_API_KEY` | *(empty)* | Cloud fallback API key |
+| `OPENROUTER_MODEL` | `anthropic/claude-3.5-sonnet` | Cloud fallback model |
+| `OPENROUTER_URL` | `https://openrouter.ai/api/v1/chat/completions` | Cloud fallback endpoint (change for LiteLLM) |
+| `USE_CLOUD_FALLBACK` | `false` | Enable cloud fallback |
+
+### Recommended Models for CPU
+
+| Model | Response Time | Notes |
+|-------|--------------|-------|
+| `qwen2.5-coder:3b` | 10-30s | Fast, decent quality |
+| `qwen2.5-coder:7b` | 30-60s | Best balance |
+| `deepseek-coder:6.7b` | 30-60s | Alternative |
+| `qwen2.5-coder:14b` | 1-3min | Higher quality, needs 32+ cores |
+
+## Certificate Management
+
+Scripts in `bin/` for mTLS certificate management:
+```bash
+bin/generate-certs.sh          # Generate CA + server + client certs
+bin/generate-user-cert.sh <user>  # Generate user certificate
+bin/revoke-cert.sh <user>      # Revoke a certificate
 ```
 
 ## Troubleshooting
 
-### Request timeout after 10 minutes
+**Timeouts:** Frontend→backend timeout is 3600s (1 hour). Uses keepalive connections. Each task gets a unique ID for tracking.
 
-**Timeout increased to 1 hour:**
-- Frontend to backend timeout: 3600 seconds
-- Keepalive connections prevent drops
-- Long-running requests (large file analysis) now supported
-- Unique task IDs track each request
-- Error returned if task completes but result is lost
+**No backends available:** Check `backends.json` — `max_model` must match or exceed the requested model. Test with `curl http://backend:5000/queue-status`.
 
-### Backend not responding
+**Slow responses:** Use smaller models. Add more backends. Check `htop`.
 
-**Check service:**
+**Service management (Linux):**
 ```bash
-# Linux
 sudo systemctl status ansible-ollama
-sudo journalctl -u ansible-ollama -n 50
-
-# macOS
-sudo launchctl list | grep ansible
-tail -f /var/log/ansible-ollama.log
-```
-
-**Restart service:**
-```bash
-# Linux
-sudo systemctl restart ansible-ollama
-
-# macOS
-sudo launchctl unload /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
-sudo launchctl load /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
-```
-
-### Frontend shows "No backends available"
-
-**Check backends.json:**
-```bash
-ssh youruser@192.168.1.229
-cat /usr/local/bin/backends.json
-```
-
-**Verify max_model matches pulled models:**
-- If you pulled `qwen2.5-coder:7b`, set `max_model: "qwen2.5-coder:7b"`
-- Model size check: requested model must be ≤ max_model
-
-**Test backend connectivity:**
-```bash
-curl http://192.168.1.230:5000/queue-status
-```
-
-### Model not found error
-
-**Pull the model:**
-```bash
-ssh youruser@192.168.1.230
-ollama pull qwen2.5-coder:7b
-ollama list  # Verify it's installed
-```
-
-### Slow responses
-
-**Use smaller models:**
-```bash
-ollama pull qwen2.5-coder:3b  # Faster
-```
-
-**Check CPU usage:**
-```bash
-htop
-```
-
-**Add more backends:**
-- Deploy additional backend servers
-- Update backends.json with new URLs
-
-### Out of memory
-
-**Check memory:**
-```bash
-free -h
-```
-
-**Solutions:**
-- Use smaller model (3B instead of 7B)
-- Increase system RAM
-- Reduce concurrent requests
-
-### GUI not connecting
-
-**Check API URL:**
-```bash
-export SHELLAMA_API=http://192.168.1.229:5000
-python3 shellama-gui.pyw
-```
-
-**Test API:**
-```bash
-curl http://192.168.1.229:5000/queue-status
-```
-
-### macOS Permission Issues
-
-**Grant full disk access:**
-1. System Preferences → Security & Privacy → Privacy
-2. Full Disk Access → Add Python
-
-**Service won't start:**
-```bash
-# Check permissions
-ls -la /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
-
-# Should be owned by root
-sudo chown root:wheel /Library/LaunchDaemons/com.ooma.ansible-ollama.plist
-```
-
-## Performance Tips
-
-### CPU Optimization
-
-**Reduce context size:**
-```bash
-ssh youruser@192.168.1.230
-sudo nano /usr/local/bin/app.py
-```
-
-Find `ollama.chat()` calls and add:
-```python
-options={'num_ctx': 2048}  # Default is 4096
-```
-
-**Model recommendations by CPU:**
-- 8-16 cores: qwen2.5-coder:1.5b or 3b
-- 16-32 cores: qwen2.5-coder:7b
-- 32+ cores: qwen2.5-coder:14b
-
-### Scaling
-
-**Horizontal scaling:**
-1. Deploy multiple backend servers
-2. Update backends.json on frontend
-3. Restart frontend service
-
-**Benefits of multiple backends:**
-- Load balancing across servers
-- Parallel file processing (analyze multiple files simultaneously)
-- Higher throughput
-- Automatic failover
-
-**Vertical scaling:**
-- Add more CPU cores
-- Increase RAM
-- Use faster storage (NVMe SSD)
-
-## Maintenance
-
-### Update models
-```bash
-ssh youruser@192.168.1.230
-ollama pull qwen2.5-coder:7b  # Updates to latest
-sudo systemctl restart ansible-ollama
-```
-
-### Update application
-```bash
-cd ansible-tools
-git pull
-ansible-playbook -i inventory.ini deploy.yml
-ansible-playbook -i inventory-frontend.ini deploy-frontend.yml
-```
-
-### View logs
-```bash
-# Backend (Linux)
 sudo journalctl -u ansible-ollama -f
-
-# Frontend (Linux)
-sudo journalctl -u ansible-ollama-frontend -f
-
-# macOS
-tail -f /var/log/ansible-ollama.log
+sudo systemctl restart ansible-ollama
 ```
 
-### Backup configuration
-```bash
-scp youruser@192.168.1.229:/usr/local/bin/backends.json backends.json.backup
-```
+## Files
 
-## Files Reference
-
-**Core:**
-- `app.py` - Backend worker
-- `app-distributed.py` - Frontend load balancer
-- `shellama` - CLI tool & agent shell
-- `shellama-gui.pyw` - Python GUI
-- `index.html` - Web UI
-- `status.html` - Status dashboard
-
-**Deployment:**
-- `deploy.yml` - Backend deployment
-- `deploy-frontend.yml` - Frontend deployment
-- `inventory.ini` - Backend inventory
-- `inventory-frontend.ini` - Frontend inventory
-- `backends.json` - Backend configuration
-
-**Services:**
-- `ansible-ollama.service` - Linux backend service
-- `ansible-ollama-frontend.service` - Linux frontend service
-- `com.ooma.ansible-ollama.plist` - macOS backend service
-
-**Documentation:**
-- `README.md` - This file
+| File | Description |
+|------|-------------|
+| `app.py` | Backend worker (Ollama interface, queue, all AI endpoints) |
+| `app-distributed.py` | Frontend load balancer (weighted routing, parallel analysis, stats) |
+| `shellama` | Bash CLI + agentic shell |
+| `powershellama.ps1` | PowerShell CLI + agentic shell |
+| `powershellama-gui.ps1` | PowerShell WinForms GUI |
+| `powershellama-gui.cmd` | Double-click GUI launcher for Windows |
+| `shellama-gui.pyw` | Python GUI (cross-platform) |
+| `index.html` | Web UI |
+| `status.html` | Admin: status summary |
+| `backends.html` | Admin: backend details |
+| `stats.html` | Admin: charts and graphs |
+| `deploy.yml` | Backend Ansible deployment |
+| `deploy-frontend.yml` | Frontend Ansible deployment |
+| `backends.json` | Backend configuration (URLs, weights, max_model) |
+| `ansible-ollama.service` | Linux backend systemd service |
+| `ansible-ollama-frontend.service` | Linux frontend systemd service |
+| `com.ooma.ansible-ollama.plist` | macOS backend LaunchDaemon |
+| `openrouter-setup.md` | Cloud fallback setup guide (OpenRouter + LiteLLM) |
+| `bin/generate-certs.sh` | CA and server/client certificate generation |
+| `bin/generate-user-cert.sh` | Per-user certificate generation |
+| `bin/revoke-cert.sh` | Certificate revocation |
 
 ## Internet Requirements
 
-**Required (one-time):**
-- `ollama pull <model>` - Download models
+**Required once:** `ollama pull <model>`
 
-**Optional:**
-- OpenRouter cloud fallback (if enabled)
+**Optional:** OpenRouter/LiteLLM cloud fallback
 
-**Not required:**
-- Running services
-- Making requests
-- All LLM inference (runs locally)
-
-After initial setup, system runs completely offline.
+**Not required:** All inference, all services, all clients — runs fully offline after model pull.
