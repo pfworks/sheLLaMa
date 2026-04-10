@@ -1,4 +1,13 @@
 ---
+- name: Bootstrap Python
+  hosts: all
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Install Python
+      raw: apt-get update && apt-get install -y python3 python3-pip
+      changed_when: false
+
 - name: Deploy Ansible Ollama Tools
   hosts: all
   become: yes
@@ -38,10 +47,14 @@
         - "{{ venv_path }}"
         - "{{ html_path }}"
 
+    - name: Check if Ollama is installed
+      stat:
+        path: /usr/local/bin/ollama
+      register: ollama_installed
+
     - name: Install Ollama
       shell: curl -fsSL https://ollama.com/install.sh | sh
-      args:
-        creates: /usr/local/bin/ollama
+      when: not ollama_installed.stat.exists
 
     - name: Create Python virtual environment
       become_user: "{{ app_user }}"
@@ -56,7 +69,7 @@
           - ollama
           - pyyaml
           - flask
-          - anthropic
+          - psutil
         virtualenv: "{{ venv_path }}"
       become_user: "{{ app_user }}"
       become: no
@@ -78,6 +91,7 @@
         src: app.py
         dest: /usr/local/bin/app.py
         mode: '0755'
+      notify: restart backend
 
     - name: Copy index.html
       copy:
@@ -92,6 +106,7 @@
         dest: /etc/systemd/system/ansible-ollama.service
         mode: '0644'
       when: ansible_facts['os_family'] != "Darwin"
+      notify: restart backend
 
     - name: Enable and start service (Linux)
       systemd:
@@ -118,3 +133,11 @@
         port: '5000'
         proto: tcp
       when: ansible_facts['os_family'] == "Debian"
+
+  handlers:
+    - name: restart backend
+      systemd:
+        name: ansible-ollama
+        state: restarted
+        daemon_reload: yes
+      when: ansible_facts['os_family'] != "Darwin"

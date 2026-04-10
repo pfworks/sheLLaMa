@@ -1,6 +1,6 @@
-# Ansible Tools - Complete Guide
+# SheLLama - Complete Guide
 
-Local LLM-powered tool for converting shell commands to Ansible playbooks, explaining code, generating code, and analyzing files. Runs completely offline after initial setup.
+Local LLM-powered tool for converting shell commands to Ansible playbooks, explaining code, generating code, analyzing files, and generating images. Runs completely offline after initial setup.
 
 ## Table of Contents
 - [Features](#features)
@@ -19,6 +19,7 @@ Local LLM-powered tool for converting shell commands to Ansible playbooks, expla
 - Descriptions → Code generation
 - Code → Explanations
 - Multi-file analysis
+- Text → Image generation (Stable Diffusion)
 
 **Interfaces:**
 - Web UI with dark mode
@@ -31,7 +32,7 @@ Local LLM-powered tool for converting shell commands to Ansible playbooks, expla
 - Load balancing across multiple backends
 - Parallel file processing across backends
 - Request queuing with position tracking
-- Optional Claude API fallback
+- Optional OpenRouter cloud fallback
 - Fully offline capable
 
 ## System Requirements
@@ -90,14 +91,14 @@ git clone <repo-url>
 cd ansible-tools
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install flask ollama pyyaml requests anthropic
+pip install flask ollama pyyaml requests
 python app.py
 ```
 
 **4. Access:**
 - Web UI: http://localhost:5000
-- GUI: `python ansible-tools-gui.pyw`
-- CLI: `./ansible-tools chat`
+- GUI: `python shellama-gui.pyw`
+- CLI: `./shellama chat`
 
 ## Deployment
 
@@ -197,15 +198,16 @@ Access at http://your-server:5000
 4. Code → Explanation: Explain code
 5. Chat: General questions
 6. Analyze Files: Multi-file analysis (supports directories)
+7. Generate Image: Text-to-image generation (Stable Diffusion)
 
 ### Python GUI
 
 ```bash
 # Set API endpoint
-export ANSIBLE_TOOLS_API=http://192.168.1.229:5000
+export SHELLAMA_API=http://192.168.1.229:5000
 
 # Run GUI
-python3 ansible-tools-gui.pyw
+python3 shellama-gui.pyw
 ```
 
 **Features:**
@@ -222,38 +224,38 @@ python3 ansible-tools-gui.pyw
 
 ```bash
 # Set API endpoint
-export ANSIBLE_TOOLS_API=http://192.168.1.229:5000
-export ANSIBLE_TOOLS_MODEL=qwen2.5-coder:7b
+export SHELLAMA_API=http://192.168.1.229:5000
+export SHELLAMA_MODEL=qwen2.5-coder:7b
 
 # Convert shell commands
-ansible-tools shell2ansible commands.txt > playbook.yml
+shellama shell2ansible commands.txt > playbook.yml
 
 # Explain playbook
-ansible-tools explain-ansible playbook.yml
+shellama explain playbook.yml
 
 # Generate code
-ansible-tools generate-code description.txt > script.py
+shellama generate description.txt > script.py
 
 # Explain code
-ansible-tools explain-code script.py
+shellama explain script.py
 
 # Analyze files
-ansible-tools analyze file1.py file2.yml file3.txt
+shellama analyze file1.py file2.yml file3.txt
 
 # Analyze entire directory (recursively)
-ansible-tools analyze /path/to/directory
+shellama analyze /path/to/directory
 
 # Mix files and directories
-ansible-tools analyze file1.py /path/to/directory file2.yml
+shellama analyze file1.py /path/to/directory file2.yml
 
 # Interactive analysis with follow-up questions
-ansible-tools analyze-interactive playbook.yml
+shellama analyze playbook.yml
 
 # Interactive chat
-ansible-tools chat
+shellama chat
 
 # Interactive mode
-ansible-tools interactive
+shellama
 ```
 
 ### REST API
@@ -305,6 +307,18 @@ curl -X POST http://your-server:5000/chat \
 curl http://your-server:5000/queue-status
 ```
 
+**Generate image:**
+```bash
+curl -X POST http://your-server:5000/generate-image \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A futuristic server room", "image_model": "sd-turbo", "steps": 4, "width": 512, "height": 512}'
+```
+
+**List image models:**
+```bash
+curl http://your-server:5000/image-models
+```
+
 ## Configuration
 
 ### Model Selection
@@ -332,7 +346,7 @@ sudo systemctl edit ansible-ollama
 Add:
 ```ini
 [Service]
-Environment="USE_CLAUDE_FALLBACK=false"
+Environment="USE_CLOUD_FALLBACK=false"
 ```
 
 Restart:
@@ -340,9 +354,11 @@ Restart:
 sudo systemctl restart ansible-ollama
 ```
 
-### Claude API Fallback (Optional)
+### OpenRouter Cloud Fallback (Optional)
 
-**Enable Claude fallback:**
+Falls back to cloud models (Claude, GPT-4, Llama, etc.) via OpenRouter when local Ollama produces low-quality output.
+
+**Enable OpenRouter fallback:**
 ```bash
 ssh youruser@192.168.1.230
 sudo systemctl edit ansible-ollama
@@ -351,15 +367,22 @@ sudo systemctl edit ansible-ollama
 Add:
 ```ini
 [Service]
-Environment="INFISICAL_TOKEN=your-token"
-Environment="INFISICAL_URL=https://infisical.corp.ooma.com"
-Environment="USE_CLAUDE_FALLBACK=true"
+Environment="OPENROUTER_API_KEY=your-openrouter-api-key"
+Environment="OPENROUTER_MODEL=anthropic/claude-3.5-sonnet"
+Environment="USE_CLOUD_FALLBACK=true"
 ```
 
 Restart:
 ```bash
 sudo systemctl restart ansible-ollama
 ```
+
+**Available models via OpenRouter:**
+- `anthropic/claude-3.5-sonnet` - Default, high quality
+- `openai/gpt-4o` - OpenAI GPT-4o
+- `meta-llama/llama-3-70b-instruct` - Open source, fast
+- `google/gemini-pro-1.5` - Google Gemini
+- See [openrouter.ai/models](https://openrouter.ai/models) for full list
 
 ### Load Balancing
 
@@ -493,8 +516,8 @@ free -h
 
 **Check API URL:**
 ```bash
-export ANSIBLE_TOOLS_API=http://192.168.1.229:5000
-python3 ansible-tools-gui.pyw
+export SHELLAMA_API=http://192.168.1.229:5000
+python3 shellama-gui.pyw
 ```
 
 **Test API:**
@@ -594,8 +617,8 @@ scp youruser@192.168.1.229:/usr/local/bin/backends.json backends.json.backup
 **Core:**
 - `app.py` - Backend worker
 - `app-distributed.py` - Frontend load balancer
-- `ansible-tools` - CLI tool
-- `ansible-tools-gui.pyw` - Python GUI
+- `shellama` - CLI tool & agent shell
+- `shellama-gui.pyw` - Python GUI
 - `index.html` - Web UI
 - `status.html` - Status dashboard
 
@@ -620,7 +643,7 @@ scp youruser@192.168.1.229:/usr/local/bin/backends.json backends.json.backup
 - `ollama pull <model>` - Download models
 
 **Optional:**
-- Claude API fallback (if enabled)
+- OpenRouter cloud fallback (if enabled)
 
 **Not required:**
 - Running services

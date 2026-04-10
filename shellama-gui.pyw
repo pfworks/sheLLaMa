@@ -11,14 +11,14 @@ import ssl
 class AnsibleToolsGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Ansible Tools")
+        self.root.title("SheLLama")
         self.root.geometry("900x850")
-        self.config_file = os.path.expanduser('~/.ansible-tools-gui.json')
-        self.cert_dir = os.path.expanduser('~/.ansible-tools')
+        self.config_file = os.path.expanduser('~/.shellama-gui.json')
+        self.cert_dir = os.path.expanduser('~/.shellama')
         self.session_tokens = 0
         
         config = self.load_config()
-        self.api_url = tk.StringVar(value=config.get('api_url', os.environ.get('ANSIBLE_TOOLS_API', 'http://localhost:5000')))
+        self.api_url = tk.StringVar(value=config.get('api_url', os.environ.get('SHELLAMA_API', 'http://localhost:5000')))
         self.api_url.trace_add('write', lambda *args: self.save_config())
         self.model = tk.StringVar(value=config.get('model', 'codellama:13b'))
         self.model.trace_add('write', lambda *args: self.save_config())
@@ -26,8 +26,8 @@ class AnsibleToolsGUI:
         self.dark_mode = tk.BooleanVar(value=config.get('dark_mode', False))
         self.text_color = tk.StringVar(value=config.get('text_color', 'green'))
         self.font_choice = tk.StringVar(value=config.get('font', 'default'))
+        self.image_model = tk.StringVar(value=config.get('image_model', 'sd-turbo'))
         
-        self.create_menu()
         self.create_menu()
         self.create_widgets()
         if self.dark_mode.get():
@@ -94,7 +94,7 @@ class AnsibleToolsGUI:
         help_menu.add_command(label="View Error Log", command=self.show_error_log)
     
     def show_about(self):
-        about_text = """Ansible Tools GUI
+        about_text = """SheLLama GUI
 Version 1.0
 
 A local LLM-powered tool for:
@@ -105,9 +105,9 @@ A local LLM-powered tool for:
 
 Uses Ollama with CodeLlama models (7B, 13B, 34B, 70B)
 
-GitHub: https://github.com/your-repo/ansible-tools
+GitHub: https://github.com/your-repo/shellama
 """
-        messagebox.showinfo("About Ansible Tools", about_text)
+        messagebox.showinfo("About SheLLama", about_text)
     
     def show_error_log(self):
         if not hasattr(self, 'last_error') or not self.last_error:
@@ -224,6 +224,11 @@ GitHub: https://github.com/your-repo/ansible-tools
         model_combo.current(2)  # Default to codellama:13b
         model_combo.pack(side=tk.LEFT, padx=5)
         
+        ttk.Label(top_frame, text="Image:").pack(side=tk.LEFT, padx=5)
+        image_model_combo = ttk.Combobox(top_frame, textvariable=self.image_model, state='readonly', width=20)
+        image_model_combo['values'] = ('sd-turbo', 'sdxl-turbo', 'sd-1.5', 'sd-2.1')
+        image_model_combo.pack(side=tk.LEFT, padx=5)
+        
         # Token counter
         self.token_label = ttk.Label(top_frame, text="Session Tokens: 0")
         self.token_label.pack(side=tk.RIGHT, padx=10)
@@ -244,6 +249,10 @@ GitHub: https://github.com/your-repo/ansible-tools
                        value='chat', command=self.switch_service).pack(side=tk.LEFT, padx=10)
         ttk.Radiobutton(service_frame, text="Analyze Files", variable=self.service,
                        value='analyze', command=self.switch_service).pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(service_frame, text="Generate Image", variable=self.service,
+                       value='generate-image', command=self.switch_service).pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(service_frame, text="Agent", variable=self.service,
+                       value='agent', command=self.switch_service).pack(side=tk.LEFT, padx=10)
         
         # Interactive mode checkbox
         self.interactive_mode = tk.BooleanVar(value=False)
@@ -333,6 +342,16 @@ GitHub: https://github.com/your-repo/ansible-tools
             self.output_text.delete(1.0, tk.END)
             self.root.children['!labelframe'].config(text="Files to Analyze")
             self.root.children['!labelframe2'].config(text="Analysis")
+        elif service == 'agent':
+            self.input_text.delete(1.0, tk.END)
+            self.output_text.delete(1.0, tk.END)
+            self.root.children['!labelframe'].config(text="Files/Directories for Agent Analysis")
+            self.root.children['!labelframe2'].config(text="Agent Report")
+        elif service == 'generate-image':
+            self.input_text.delete(1.0, tk.END)
+            self.output_text.delete(1.0, tk.END)
+            self.root.children['!labelframe'].config(text="Image Prompt")
+            self.root.children['!labelframe2'].config(text="Generated Image")
     
     def toggle_interactive(self):
         """Show/hide interactive question input"""
@@ -458,6 +477,12 @@ GitHub: https://github.com/your-repo/ansible-tools
                 endpoint = '/chat'
                 data = {'message': input_content, 'model': model}
                 output_key = 'response'
+            elif service == 'agent':
+                self._agent_thread(input_content, model)
+                return
+            elif service == 'generate-image':
+                self._generate_image_thread(input_content)
+                return
             elif service == 'analyze':
                 endpoint = '/analyze'
                 file_paths = [line.strip() for line in input_content.split('\n') if line.strip()]
@@ -518,6 +543,191 @@ GitHub: https://github.com/your-repo/ansible-tools
             self.root.after(0, lambda: self.status_label.config(
                 text=error_msg, foreground="red"))
     
+    def _api_call(self, endpoint, data):
+        """Make an API call and return the result dict."""
+        json_data = json.dumps(data).encode('utf-8')
+        ssl_context = self.get_ssl_config()
+        req = urllib.request.Request(
+            f"{self.api_url.get()}{endpoint}",
+            data=json_data,
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, context=ssl_context) as response:
+            return json.loads(response.read().decode())
+
+    def _agent_append(self, text):
+        """Append text to output and scroll to end."""
+        self.root.after(0, lambda: self.output_text.insert(tk.END, text))
+        self.root.after(0, lambda: self.output_text.see(tk.END))
+
+    def _agent_thread(self, input_content, model, max_rounds=5):
+        """Agentic multi-round analysis with live output."""
+        try:
+            # Read files
+            file_paths = [line.strip() for line in input_content.split('\n') if line.strip()]
+            files_data = []
+            for path in file_paths:
+                if os.path.isdir(path):
+                    for root, dirs, files in os.walk(path):
+                        for f in files:
+                            fp = os.path.join(root, f)
+                            try:
+                                with open(fp, 'r') as fh:
+                                    files_data.append({'path': fp, 'content': fh.read()})
+                            except Exception as e:
+                                pass
+                else:
+                    try:
+                        with open(path, 'r') as fh:
+                            files_data.append({'path': path, 'content': fh.read()})
+                    except Exception as e:
+                        pass
+
+            if not files_data:
+                self.root.after(0, lambda: self.status_label.config(text="Error: No readable files found", foreground="red"))
+                return
+
+            files_context = "\n\n".join([f"=== {f['path']} ===\n{f['content']}" for f in files_data])
+            file_list = "\n".join([f"  - {f['path']}" for f in files_data])
+            total_tokens = 0
+            total_elapsed = 0
+            findings = []
+
+            self.root.after(0, lambda: self.output_text.delete(1.0, tk.END))
+
+            # Round 1
+            self.root.after(0, lambda: self.status_label.config(
+                text=f"[Agent] Round 1/{max_rounds}: Initial analysis of {len(files_data)} file(s)...", foreground="blue"))
+            self._agent_append(f"═══ Round 1/{max_rounds}: Initial Analysis ═══\n\n")
+
+            result = self._api_call('/chat', {'message': f"""Analyze these files. Provide:
+1. Overview of what this codebase/project does
+2. File relationships and dependencies
+3. Key issues, bugs, or security concerns
+4. Areas that need deeper investigation
+
+Files:
+{files_context}""", 'model': model})
+
+            if result.get('error'):
+                self.root.after(0, lambda: self.status_label.config(text=f"Error: {result['error']}", foreground="red"))
+                return
+
+            findings.append(result['response'])
+            total_tokens += result.get('total_tokens', 0)
+            total_elapsed += result.get('elapsed', 0)
+            self._agent_append(f"{result['response']}\n\n[{result['elapsed']}s | {result.get('total_tokens', 0)} tokens]\n\n")
+
+            # Rounds 2+
+            for round_num in range(2, max_rounds + 1):
+                self.root.after(0, lambda rn=round_num: self.status_label.config(
+                    text=f"[Agent] Round {rn}/{max_rounds}: Investigating...", foreground="blue"))
+                self._agent_append(f"═══ Round {round_num}/{max_rounds}: Deep Dive ═══\n\n")
+
+                result = self._api_call('/chat', {'message': f"""You are analyzing a codebase. Here are the files:
+{file_list}
+
+Your analysis so far:
+{chr(10).join(findings)}
+
+Based on your analysis so far, what is the most important thing to investigate next? Pick ONE specific topic and analyze it in depth using the file contents below. Focus on something you haven't fully covered yet — such as error handling, security, performance, code quality, missing features, or architectural issues.
+
+If you believe the analysis is thorough enough, respond with exactly "ANALYSIS COMPLETE" on the first line.
+
+Files:
+{files_context}""", 'model': model})
+
+                if result.get('error'):
+                    self._agent_append(f"Error: {result['error']}\n\n")
+                    break
+
+                response = result['response']
+                total_tokens += result.get('total_tokens', 0)
+                total_elapsed += result.get('elapsed', 0)
+
+                if response.strip().startswith('ANALYSIS COMPLETE'):
+                    self._agent_append(f"Agent determined analysis is complete.\n\n")
+                    break
+
+                findings.append(response)
+                self._agent_append(f"{response}\n\n[{result['elapsed']}s | {result.get('total_tokens', 0)} tokens]\n\n")
+
+            # Final consolidation
+            self.root.after(0, lambda: self.status_label.config(
+                text="[Agent] Generating final report...", foreground="blue"))
+            self._agent_append(f"═══ Final Consolidated Report ═══\n\n")
+
+            report = self._api_call('/chat', {'message': f"""You performed a multi-round analysis of a codebase. Consolidate all findings below into a single, well-organized final report. Remove duplicates, organize by topic, and prioritize the most important findings.
+
+Findings from {len(findings)} rounds of analysis:
+
+{chr(10).join([f"--- Round {i+1} ---{chr(10)}{f}" for i, f in enumerate(findings)])}
+
+Write the final consolidated report now.""", 'model': model})
+
+            total_tokens += report.get('total_tokens', 0)
+            total_elapsed += report.get('elapsed', 0)
+
+            if report.get('error'):
+                self._agent_append(f"Error generating report: {report['error']}\n")
+            else:
+                self._agent_append(f"{report['response']}\n")
+
+            self.session_tokens += total_tokens
+            self.root.after(0, lambda: self.token_label.config(text=f"Session Tokens: {self.session_tokens:,}"))
+            self.root.after(0, lambda: self.status_label.config(
+                text=f"[Agent] Done: {len(findings)} rounds, {total_elapsed:.1f}s, {total_tokens:,} tokens", foreground="green"))
+
+            # Store context for interactive follow-ups
+            if self.interactive_mode.get():
+                self.files_context = files_data
+
+        except Exception as e:
+            error_msg = f"Error: {str(e)}"
+            self.last_error = f"Timestamp: {self.get_timestamp()}\nException: {type(e).__name__}\n\n{str(e)}"
+            self.root.after(0, lambda: self.status_label.config(text=error_msg, foreground="red"))
+
+    def _generate_image_thread(self, prompt):
+        """Generate an image and display it in the output area."""
+        try:
+            import base64
+            import tempfile
+            
+            self.root.after(0, lambda: self.status_label.config(text="Generating image (this may take several minutes on CPU)...", foreground="blue"))
+            
+            image_model = self.image_model.get()
+            steps = 4 if 'turbo' in image_model else 20
+            
+            data = {'prompt': prompt, 'image_model': image_model, 'steps': steps, 'width': 512, 'height': 512}
+            result = self._api_call('/generate-image', data)
+            
+            if result.get('error'):
+                self.last_error = f"Image generation error: {result['error']}"
+                self.root.after(0, lambda: self.status_label.config(text=f"Error: {result['error']}", foreground="red"))
+                return
+            
+            # Save image to temp file and show path
+            image_data = base64.b64decode(result['image'])
+            tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False, prefix='shellama-')
+            tmp.write(image_data)
+            tmp.close()
+            
+            self.root.after(0, lambda: self.output_text.delete(1.0, tk.END))
+            self.root.after(0, lambda: self.output_text.insert(1.0,
+                f"Image saved to: {tmp.name}\n\n"
+                f"Model: {result.get('model', image_model)}\n"
+                f"Prompt: {prompt}\n"
+                f"Steps: {result.get('steps', steps)}\n"
+                f"Size: {result.get('width', 512)}x{result.get('height', 512)}\n"
+                f"Time: {result['elapsed']}s"))
+            
+            self.root.after(0, lambda: self.status_label.config(
+                text=f"Image generated in {result['elapsed']}s — saved to {tmp.name}", foreground="green"))
+            
+        except Exception as e:
+            self.last_error = f"Exception: {str(e)}"
+            self.root.after(0, lambda: self.status_label.config(text=f"Error: {str(e)}", foreground="red"))
+
     def get_timestamp(self):
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

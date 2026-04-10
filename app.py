@@ -17,26 +17,10 @@ total_requests = 0
 total_tokens = 0
 stats_lock = Lock()
 
-# Infisical configuration
-INFISICAL_TOKEN = os.environ.get('INFISICAL_TOKEN', '')
-INFISICAL_URL = os.environ.get('INFISICAL_URL', 'https://infisical.corp.ooma.com')
-
-def get_secret(key):
-    """Fetch secret from Infisical"""
-    if not INFISICAL_TOKEN:
-        return None
-    try:
-        resp = requests.get(
-            f"{INFISICAL_URL}/api/v3/secrets/raw/{key}",
-            headers={"Authorization": f"Bearer {INFISICAL_TOKEN}"}
-        )
-        return resp.json().get('secret', {}).get('secretValue')
-    except:
-        return None
-
-# Claude API configuration
-CLAUDE_API_KEY = get_secret('CLAUDE_API_KEY') or os.environ.get('CLAUDE_API_KEY', '')
-USE_CLAUDE_FALLBACK = os.environ.get('USE_CLAUDE_FALLBACK', 'true').lower() == 'true'
+# OpenRouter configuration
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
+OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'anthropic/claude-3.5-sonnet')
+USE_CLOUD_FALLBACK = os.environ.get('USE_CLOUD_FALLBACK', 'false').lower() == 'true'
 
 def worker():
     global active_task, total_requests, total_tokens
@@ -64,6 +48,9 @@ def worker():
                 result = chat(task['message'], model)
             elif task_type == 'analyze':
                 result = analyze_files(task['files'], model)
+            elif task_type == 'generate_image':
+                result = generate_image(task['prompt'], task.get('image_model', 'sd-turbo'),
+                                       task.get('steps', 20), task.get('width', 512), task.get('height', 512))
             else:
                 result = generate_playbook(task['commands'], model)
             
@@ -71,9 +58,9 @@ def worker():
             with stats_lock:
                 total_tokens += result.get('total_tokens', 0)
             
-            # Check if we should fallback to Claude
-            if USE_CLAUDE_FALLBACK and CLAUDE_API_KEY and should_use_claude(result):
-                result = fallback_to_claude(task, result)
+            # Check if we should fallback to cloud
+            if USE_CLOUD_FALLBACK and OPENROUTER_API_KEY and should_use_cloud(result):
+                result = fallback_to_openrouter(task, result)
             
             task_results[task_id] = result
         except Exception as e:
@@ -83,7 +70,7 @@ def worker():
         active_task = None
         task_queue.task_done()
 
-def should_use_claude(result):
+def should_use_cloud(result):
     """Determine if response quality is low"""
     if result.get('error'):
         return True
@@ -93,14 +80,11 @@ def should_use_claude(result):
         return True
     return False
 
-def fallback_to_claude(task, ollama_result):
-    """Call Claude API as fallback"""
-    import anthropic
-    
+def fallback_to_openrouter(task, ollama_result):
+    """Call OpenRouter API as fallback (supports Claude, GPT-4, Llama, etc.)"""
     try:
-        client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         task_type = task.get('type')
-        
+
         if task_type == 'explain':
             prompt = f"Explain this Ansible playbook:\n\n{task['playbook']}"
         elif task_type == 'generate_code':
@@ -119,16 +103,23 @@ def fallback_to_claude(task, ollama_result):
             prompt = f"Analyze these files:\n{files_content}"
         else:
             prompt = f"Convert these shell commands into an Ansible playbook. Return ONLY valid YAML:\n\n{task['commands']}"
-        
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}]
+
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": OPENROUTER_MODEL,
+                "max_tokens": 4096,
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=120
         )
-        
-        content = message.content[0].text
-        
-        # Update result with Claude response
+        data = resp.json()
+        content = data['choices'][0]['message']['content']
+
         if task_type in ['explain', 'explain_code']:
             ollama_result['explanation'] = content
         elif task_type == 'generate_code':
@@ -139,13 +130,14 @@ def fallback_to_claude(task, ollama_result):
             ollama_result['analysis'] = content
         else:
             ollama_result['playbook'] = content
-        
+
         ollama_result['error'] = None
-        ollama_result['claude_fallback'] = True
-        
+        ollama_result['cloud_fallback'] = True
+        ollama_result['cloud_model'] = OPENROUTER_MODEL
+
     except Exception as e:
-        ollama_result['claude_error'] = str(e)
-    
+        ollama_result['cloud_error'] = str(e)
+
     return ollama_result
 
 def generate_playbook(commands, model='codellama:13b'):
@@ -357,6 +349,72 @@ def chat(message, model='codellama:13b'):
         'total_tokens': response.get('prompt_eval_count', 0) + response.get('eval_count', 0)
     }
 
+def generate_image(prompt, model='stable-diffusion-v1-5', steps=20, width=512, height=512):
+    import time
+    import base64
+    import io
+    
+    start_time = time.time()
+    
+    # Map friendly names to HuggingFace model IDs
+    model_map = {
+        'sd-1.5': 'sd-legacy/stable-diffusion-v1-5',
+        'stable-diffusion-v1-5': 'sd-legacy/stable-diffusion-v1-5',
+        'sd-2.1': 'stabilityai/stable-diffusion-2-1',
+        'stable-diffusion-2-1': 'stabilityai/stable-diffusion-2-1',
+        'sdxl-turbo': 'stabilityai/sdxl-turbo',
+        'sd-turbo': 'stabilityai/sd-turbo',
+    }
+    
+    hf_model = model_map.get(model, model)
+    
+    try:
+        import torch
+        from diffusers import AutoPipelineForText2Image
+        
+        pipe = AutoPipelineForText2Image.from_pretrained(
+            hf_model,
+            torch_dtype=torch.float32,
+        )
+        pipe.to("cpu")
+        
+        # Turbo models use fewer steps
+        if 'turbo' in hf_model:
+            steps = min(steps, 4)
+        
+        result = pipe(
+            prompt,
+            num_inference_steps=steps,
+            width=width,
+            height=height,
+            guidance_scale=0.0 if 'turbo' in hf_model else 7.5,
+        )
+        
+        image = result.images[0]
+        
+        # Convert to base64 PNG
+        buf = io.BytesIO()
+        image.save(buf, format='PNG')
+        image_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+        
+        elapsed = time.time() - start_time
+        
+        return {
+            'image': image_b64,
+            'elapsed': round(elapsed, 2),
+            'model': hf_model,
+            'prompt': prompt,
+            'steps': steps,
+            'width': width,
+            'height': height,
+        }
+    except Exception as e:
+        return {
+            'image': '',
+            'elapsed': round(time.time() - start_time, 2),
+            'error': str(e),
+        }
+
 def analyze_files(files, model='codellama:13b'):
     import time
     
@@ -408,6 +466,8 @@ def index():
 @app.route('/queue-status')
 def queue_status():
     global total_requests, total_tokens
+    import psutil
+    import platform
     queue_size = task_queue.qsize()
     if active_task is not None:
         queue_size += 1
@@ -416,7 +476,13 @@ def queue_status():
         'queue_size': queue_size,
         'active': active_task is not None,
         'total_requests': total_requests,
-        'total_tokens': total_tokens
+        'total_tokens': total_tokens,
+        'cpu_percent': psutil.cpu_percent(interval=0.1),
+        'ram_available_gb': round(psutil.virtual_memory().available / (1024**3), 2),
+        'ram_total_gb': round(psutil.virtual_memory().total / (1024**3), 2),
+        'cpu_arch': platform.machine(),
+        'cpu_count': psutil.cpu_count(logical=True),
+        'cpu_freq_mhz': round((psutil.cpu_freq().max or psutil.cpu_freq().current) if psutil.cpu_freq() else 0),
     }
     
     if active_task:
@@ -611,6 +677,48 @@ def analyze_endpoint():
     result['task_id'] = task_id
     
     return jsonify(result)
+
+@app.route('/generate-image', methods=['POST'])
+def generate_image_endpoint():
+    prompt = request.json.get('prompt', '')
+    image_model = request.json.get('image_model', 'sd-turbo')
+    steps = request.json.get('steps', 20)
+    width = request.json.get('width', 512)
+    height = request.json.get('height', 512)
+    
+    queue_size = task_queue.qsize()
+    if active_task is not None:
+        queue_size += 1
+    
+    task_id = str(uuid.uuid4())
+    event = Event()
+    task = {'id': task_id, 'prompt': prompt, 'image_model': image_model,
+            'steps': steps, 'width': width, 'height': height,
+            'model': 'none', 'event': event, 'type': 'generate_image'}
+    task_queue.put(task)
+    
+    event.wait()
+    result = task_results.pop(task_id, None)
+    
+    if result is None:
+        return jsonify({'error': f'Task {task_id} completed but result was lost'}), 500
+    
+    if queue_size > 0:
+        result['queue_position'] = queue_size + 1
+    result['task_id'] = task_id
+    
+    return jsonify(result)
+
+@app.route('/image-models')
+def image_models():
+    return jsonify({
+        'models': [
+            {'id': 'sd-turbo', 'name': 'Stable Diffusion Turbo', 'description': 'Fast, 1-4 steps, 512x512'},
+            {'id': 'sdxl-turbo', 'name': 'SDXL Turbo', 'description': 'Fast SDXL, 1-4 steps, 512x512'},
+            {'id': 'sd-1.5', 'name': 'Stable Diffusion 1.5', 'description': 'Classic, 20+ steps, 512x512'},
+            {'id': 'sd-2.1', 'name': 'Stable Diffusion 2.1', 'description': 'Improved, 20+ steps, 768x768'},
+        ]
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

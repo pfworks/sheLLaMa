@@ -10,6 +10,27 @@ import os
 
 app = Flask(__name__)
 
+# Per-IP token tracking
+ip_token_history = {}  # {ip: [{timestamp, tokens}]}
+ip_token_lock = Lock()
+IP_HISTORY_MAX = 8640  # ~1 day at 10s intervals
+
+# Per-backend token tracking (snapshots of cumulative totals)
+backend_token_history = {}  # {url: [{timestamp, tokens}]}
+last_backend_tokens = {}    # {url: last_known_total} for computing deltas
+
+def record_ip_tokens(ip, tokens):
+    """Record token usage for a client IP"""
+    if tokens <= 0:
+        return
+    with ip_token_lock:
+        if ip not in ip_token_history:
+            ip_token_history[ip] = []
+        ip_token_history[ip].append({'timestamp': time.time(), 'tokens': tokens})
+        # Trim old entries
+        if len(ip_token_history[ip]) > IP_HISTORY_MAX:
+            ip_token_history[ip] = ip_token_history[ip][-IP_HISTORY_MAX:]
+
 # Load backends from config file
 def load_backends():
     config_file = os.path.join(os.path.dirname(__file__), 'backends.json')
@@ -51,28 +72,40 @@ backend_status = {b['url']: {'available': True, 'queue_size': 0, 'weight': b['we
 backend_lock = Lock()
 
 def get_backend_queue_size(url):
-    """Check backend queue size"""
+    """Check backend queue size and capacity stats"""
     try:
         resp = requests.get(
             f"{url}/queue-status", 
             timeout=2
         )
-        return resp.json().get('queue_size', 999)
+        data = resp.json()
+        return data
     except:
-        return 999
+        return None
 
 def get_available_backend(requested_model='codellama:13b', wait=True, timeout=300):
-    """Get backend with lowest weighted queue score that supports the requested model"""
+    """Get backend with lowest weighted queue score that supports the requested model.
+    Among same-weight backends, prefer those with more free RAM and lower CPU usage."""
     import time
     start_time = time.time()
     
     while True:
         with backend_lock:
-            # Update queue sizes
+            # Update queue sizes and capacity
             for backend in BACKENDS:
                 url = backend['url']
                 if backend_status[url]['available']:
-                    backend_status[url]['queue_size'] = get_backend_queue_size(url)
+                    data = get_backend_queue_size(url)
+                    if data:
+                        backend_status[url]['queue_size'] = data.get('queue_size', 999)
+                        backend_status[url]['cpu_percent'] = data.get('cpu_percent', 50)
+                        backend_status[url]['ram_available_gb'] = data.get('ram_available_gb', 0)
+                        backend_status[url]['ram_total_gb'] = data.get('ram_total_gb', 16)
+                        backend_status[url]['cpu_arch'] = data.get('cpu_arch', 'x86_64')
+                        backend_status[url]['cpu_count'] = data.get('cpu_count', 4)
+                        backend_status[url]['cpu_freq_mhz'] = data.get('cpu_freq_mhz', 2000)
+                    else:
+                        backend_status[url]['queue_size'] = 999
             
             # Filter backends that support the requested model
             requested_size = MODEL_SIZES.get(requested_model, 2)
@@ -82,7 +115,20 @@ def get_available_backend(requested_model='codellama:13b', wait=True, timeout=30
                     max_model = backend_status[url]['max_model']
                     max_size = MODEL_SIZES.get(max_model, 4)
                     if requested_size <= max_size:
-                        score = backend_status[url]['queue_size'] - (backend_status[url]['weight'] * 0.1)
+                        qs = backend_status[url]['queue_size']
+                        w = backend_status[url]['weight']
+                        cpu = backend_status[url].get('cpu_percent', 50)
+                        ram = backend_status[url].get('ram_available_gb', 0)
+                        # Score: lower is better
+                        # queue_size is primary, weight reduces score
+                        # cpu adds 0-1 penalty, total ram gives capacity bonus
+                        # Apple Silicon (arm64) gets major bonus for unified memory / neural engine
+                        # CPU frequency normalized to 5GHz scale
+                        ram_total = backend_status[url].get('ram_total_gb', 16)
+                        arch = backend_status[url].get('cpu_arch', 'x86_64')
+                        freq = backend_status[url].get('cpu_freq_mhz', 2000)
+                        arch_multiplier = 3.0 if arch == 'arm64' else 1.0
+                        score = qs - (w * 0.1) + (cpu / 100.0) - (ram_total / 128.0) * arch_multiplier - (freq / 5000.0)
                         available.append((url, score))
             
             if available:
@@ -106,7 +152,7 @@ def release_backend(url):
     with backend_lock:
         backend_status[url]['available'] = True
 
-def proxy_request(endpoint, data):
+def proxy_request(endpoint, data, client_ip=None):
     """Send request to available backend with keepalive"""
     model = data.get('model', 'codellama:13b')
     backend = get_available_backend(model)
@@ -128,6 +174,10 @@ def proxy_request(endpoint, data):
         # Check if result was lost
         if result.get('error') and 'result was lost' in result.get('error', ''):
             return {'error': f"Backend {backend} lost task result. Task may have completed but response was not stored."}, 500
+        
+        # Record tokens for this client IP
+        if client_ip:
+            record_ip_tokens(client_ip, result.get('total_tokens', 0))
         
         return result, 200
     except requests.exceptions.Timeout:
@@ -209,6 +259,9 @@ def queue_status():
             total_requests += data.get('total_requests', 0)
             total_tokens += data.get('total_tokens', 0)
             
+            cpu_pct = data.get('cpu_percent', 0)
+            ram_avail = data.get('ram_available_gb', 0)
+            ram_total = data.get('ram_total_gb', 0)
             backends_info.append({
                 'url': url,
                 'weight': weight,
@@ -217,7 +270,13 @@ def queue_status():
                 'active': is_active,
                 'status': 'online',
                 'active_model': data.get('active_model', 'none'),
-                'tokens': data.get('total_tokens', 0)
+                'tokens': data.get('total_tokens', 0),
+                'cpu_percent': cpu_pct,
+                'ram_available_gb': ram_avail,
+                'ram_total_gb': ram_total,
+                'cpu_arch': data.get('cpu_arch', 'x86_64'),
+                'cpu_count': data.get('cpu_count', 0),
+                'cpu_freq_mhz': data.get('cpu_freq_mhz', 0)
             })
         except:
             backends_info.append({
@@ -228,9 +287,31 @@ def queue_status():
                 'active': False,
                 'status': 'offline',
                 'active_model': 'none',
-                'tokens': 0
+                'tokens': 0,
+                'cpu_percent': 0,
+                'ram_available_gb': 0,
+                'ram_total_gb': 0,
+                'cpu_arch': 'unknown',
+                'cpu_count': 0,
+                'cpu_freq_mhz': 0
             })
     
+    # Record per-backend token deltas
+    now = time.time()
+    with ip_token_lock:
+        for b in backends_info:
+            url = b['url']
+            cur = b.get('tokens', 0)
+            prev = last_backend_tokens.get(url, cur)
+            delta = cur - prev
+            last_backend_tokens[url] = cur
+            if delta > 0:
+                if url not in backend_token_history:
+                    backend_token_history[url] = []
+                backend_token_history[url].append({'timestamp': now, 'tokens': delta})
+                if len(backend_token_history[url]) > IP_HISTORY_MAX:
+                    backend_token_history[url] = backend_token_history[url][-IP_HISTORY_MAX:]
+
     return jsonify({
         'queue_size': total_queue,
         'active': active_count > 0,
@@ -247,11 +328,12 @@ def generate():
     commands = request.json.get('commands', '')
     model = request.json.get('model', 'codellama:13b')
     split = request.json.get('split', False)
+    client_ip = request.remote_addr
     
     if split:
         result, status = split_and_process(commands, model)
     else:
-        result, status = proxy_request('/generate', {'commands': commands, 'model': model})
+        result, status = proxy_request('/generate', {'commands': commands, 'model': model}, client_ip)
     
     return jsonify(result), status
 
@@ -259,34 +341,35 @@ def generate():
 def explain():
     playbook = request.json.get('playbook', '')
     model = request.json.get('model', 'codellama:13b')
-    result, status = proxy_request('/explain', {'playbook': playbook, 'model': model})
+    result, status = proxy_request('/explain', {'playbook': playbook, 'model': model}, request.remote_addr)
     return jsonify(result), status
 
 @app.route('/generate-code', methods=['POST'])
 def generate_code_endpoint():
     description = request.json.get('description', '')
     model = request.json.get('model', 'codellama:13b')
-    result, status = proxy_request('/generate-code', {'description': description, 'model': model})
+    result, status = proxy_request('/generate-code', {'description': description, 'model': model}, request.remote_addr)
     return jsonify(result), status
 
 @app.route('/explain-code', methods=['POST'])
 def explain_code_endpoint():
     code = request.json.get('code', '')
     model = request.json.get('model', 'codellama:13b')
-    result, status = proxy_request('/explain-code', {'code': code, 'model': model})
+    result, status = proxy_request('/explain-code', {'code': code, 'model': model}, request.remote_addr)
     return jsonify(result), status
 
 @app.route('/chat', methods=['POST'])
 def chat_endpoint():
     message = request.json.get('message', '')
     model = request.json.get('model', 'codellama:13b')
-    result, status = proxy_request('/chat', {'message': message, 'model': model})
+    result, status = proxy_request('/chat', {'message': message, 'model': model}, request.remote_addr)
     return jsonify(result), status
 
 @app.route('/analyze', methods=['POST'])
 def analyze_endpoint():
     files = request.json.get('files', [])
     model = request.json.get('model', 'codellama:13b')
+    client_ip = request.remote_addr
     
     # If we have multiple files, check if we should process in parallel or sequential
     if len(files) > 1:
@@ -305,7 +388,7 @@ def analyze_endpoint():
             total_tokens = 0
             
             for idx, file_data in enumerate(files):
-                result, status = proxy_request('/analyze', {'files': [file_data], 'model': model})
+                result, status = proxy_request('/analyze', {'files': [file_data], 'model': model}, client_ip)
                 if result.get('error'):
                     return jsonify({'error': f"Error processing {file_data.get('path', f'file {idx}')}: {result['error']}"}), 200
                 
@@ -328,7 +411,7 @@ def analyze_endpoint():
         threads = []
         
         def process_file(file_data, idx):
-            result, status = proxy_request('/analyze', {'files': [file_data], 'model': model})
+            result, status = proxy_request('/analyze', {'files': [file_data], 'model': model}, client_ip)
             results.append((idx, result, status))
         
         for idx, file_data in enumerate(files):
@@ -366,8 +449,35 @@ def analyze_endpoint():
         }), 200
     else:
         # Single file processing
-        result, status = proxy_request('/analyze', {'files': files, 'model': model})
+        result, status = proxy_request('/analyze', {'files': files, 'model': model}, client_ip)
         return jsonify(result), status
+
+@app.route('/ip-tokens')
+def ip_tokens():
+    """Return token usage history per client IP and per backend"""
+    with ip_token_lock:
+        result = {ip: entries for ip, entries in ip_token_history.items()}
+        for url, entries in backend_token_history.items():
+            result[f"backend:{url}"] = entries
+        return jsonify(result)
+
+@app.route('/generate-image', methods=['POST'])
+def generate_image_endpoint():
+    data = request.json
+    # Image generation doesn't use an LLM model, pick any available backend
+    result, status = proxy_request('/generate-image', data, request.remote_addr)
+    return jsonify(result), status
+
+@app.route('/image-models')
+def image_models():
+    """Proxy to any online backend"""
+    for backend in BACKENDS:
+        try:
+            resp = requests.get(f"{backend['url']}/image-models", timeout=5)
+            return jsonify(resp.json())
+        except:
+            continue
+    return jsonify({'models': []})
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -378,7 +488,7 @@ def upload():
     commands = file.read().decode('utf-8')
     model = request.form.get('model', 'codellama:13b')
     
-    result, status = proxy_request('/generate', {'commands': commands, 'model': model})
+    result, status = proxy_request('/generate', {'commands': commands, 'model': model}, request.remote_addr)
     return jsonify(result), status
 
 if __name__ == '__main__':

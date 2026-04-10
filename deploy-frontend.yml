@@ -57,6 +57,7 @@
         src: app-distributed.py
         dest: /usr/local/bin/app-distributed.py
         mode: '0755'
+      notify: restart frontend
 
     - name: Copy backends.json
       copy:
@@ -85,6 +86,7 @@
         dest: /etc/systemd/system/ansible-ollama-frontend.service
         mode: '0644'
       when: ansible_facts['os_family'] != "Darwin"
+      notify: restart frontend
 
     - name: Enable and start service (Linux)
       systemd:
@@ -100,3 +102,11 @@
         port: '5000'
         proto: tcp
       when: ansible_facts['os_family'] == "Debian"
+
+  handlers:
+    - name: restart frontend
+      systemd:
+        name: ansible-ollama-frontend
+        state: restarted
+        daemon_reload: yes
+      when: ansible_facts['os_family'] != "Darwin"

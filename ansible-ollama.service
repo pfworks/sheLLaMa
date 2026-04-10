@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-Environment="INFISICAL_TOKEN="
-Environment="INFISICAL_URL=https://infisical.corp.ooma.com"
-Environment="USE_CLAUDE_FALLBACK=true"
+Environment="OPENROUTER_API_KEY="
+Environment="OPENROUTER_MODEL=anthropic/claude-3.5-sonnet"
+Environment="USE_CLOUD_FALLBACK=false"
 ExecStart=/export/ollama/bin/python3 /usr/local/bin/app.py
 Restart=always
 RestartSec=3

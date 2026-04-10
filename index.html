@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Ansible Tools</title>
+    <title>SheLLama</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
@@ -31,7 +31,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Ansible Tools</h1>
+        <h1>SheLLama</h1>
         
         <div class="section">
             <label>Model: 
@@ -73,6 +73,10 @@
             <label style="margin-left: 20px;">
                 <input type="radio" name="service" value="chat" onchange="switchService()"> 
                 Chat
+            </label>
+            <label style="margin-left: 20px;">
+                <input type="radio" name="service" value="generateImage" onchange="switchService()"> 
+                Generate Image
             </label>
         </div>
 
@@ -189,6 +193,37 @@
                 </div>
             </div>
         </div>
+        <div id="generateImageService" style="display: none;">
+            <div class="section">
+                <h3>Image Prompt</h3>
+                <label>Image Model:
+                    <select id="imageModelSelect">
+                        <option value="sd-turbo" selected>SD Turbo (Fast, 1-4 steps)</option>
+                        <option value="sdxl-turbo">SDXL Turbo (Fast SDXL, 1-4 steps)</option>
+                        <option value="sd-1.5">Stable Diffusion 1.5 (Classic, 20+ steps)</option>
+                        <option value="sd-2.1">Stable Diffusion 2.1 (Improved, 20+ steps)</option>
+                    </select>
+                </label>
+                <textarea id="imagePrompt" placeholder="Describe the image you want to generate..." style="height: 100px;"></textarea>
+                <div class="buttons">
+                    <button class="primary" onclick="generateImage()">Generate Image</button>
+                    <button class="secondary" onclick="clearAll()">Clear</button>
+                </div>
+            </div>
+
+            <div id="statusImage"></div>
+
+            <div class="section">
+                <h3>Generated Image</h3>
+                <div id="imageOutput" style="text-align: center; min-height: 200px; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
+                    <p style="color: #999;">Generated image will appear here...</p>
+                </div>
+                <div class="buttons">
+                    <button class="secondary" onclick="downloadImage()">Download Image</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -243,6 +278,7 @@
             document.getElementById('generateCodeService').style.display = service === 'generateCode' ? 'block' : 'none';
             document.getElementById('explainCodeService').style.display = service === 'explainCode' ? 'block' : 'none';
             document.getElementById('chatService').style.display = service === 'chat' ? 'block' : 'none';
+            document.getElementById('generateImageService').style.display = service === 'generateImage' ? 'block' : 'none';
         }
 
         function showStatus(message, type, statusId = 'status') {
@@ -467,6 +503,59 @@
             }
         }
 
+        async function generateImage() {
+            const prompt = document.getElementById('imagePrompt').value;
+            if (!prompt.trim()) {
+                showStatus('Please enter an image prompt', 'error', 'statusImage');
+                return;
+            }
+
+            const imageModel = document.getElementById('imageModelSelect').value;
+            const steps = imageModel.includes('turbo') ? 4 : 20;
+
+            showStatus(`Generating image with ${imageModel} (this may take several minutes on CPU)`, 'loading', 'statusImage');
+
+            try {
+                const response = await fetch('/generate-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, image_model: imageModel, steps, width: 512, height: 512 })
+                });
+
+                const data = await response.json();
+                if (data.error) {
+                    showStatus('Error: ' + data.error, 'error', 'statusImage');
+                    return;
+                }
+
+                const img = document.createElement('img');
+                img.src = 'data:image/png;base64,' + data.image;
+                img.style.maxWidth = '100%';
+                img.id = 'generatedImg';
+
+                const output = document.getElementById('imageOutput');
+                output.innerHTML = '';
+                output.appendChild(img);
+
+                showStatus(`Generated in ${data.elapsed}s | Model: ${data.model} | ${data.steps} steps`, 'success', 'statusImage');
+            } catch (error) {
+                showStatus('Error: ' + error.message, 'error', 'statusImage');
+            }
+        }
+
+        function downloadImage() {
+            const img = document.getElementById('generatedImg');
+            if (!img) {
+                showStatus('No image to download', 'error', 'statusImage');
+                return;
+            }
+            const a = document.createElement('a');
+            a.href = img.src;
+            a.download = 'generated_image.png';
+            a.click();
+            showStatus('Downloaded generated_image.png', 'success', 'statusImage');
+        }
+
         function download() {
             const playbook = document.getElementById('playbook').value;
             if (!playbook) {
@@ -498,6 +587,14 @@
                 document.getElementById('description').value = '';
                 document.getElementById('generatedCode').value = '';
                 document.getElementById('statusCode').style.display = 'none';
+            } else if (service === 'chat') {
+                document.getElementById('chatInput').value = '';
+                document.getElementById('chatResponse').value = '';
+                document.getElementById('statusChat').style.display = 'none';
+            } else if (service === 'generateImage') {
+                document.getElementById('imagePrompt').value = '';
+                document.getElementById('imageOutput').innerHTML = '<p style="color: #999;">Generated image will appear here...</p>';
+                document.getElementById('statusImage').style.display = 'none';
             } else {
                 document.getElementById('codeInput').value = '';
                 document.getElementById('codeExplanation').value = '';
