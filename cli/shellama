@@ -99,6 +99,8 @@ You will see the command output, then you can run more commands or give your fin
 IMPORTANT:
 - Always run commands yourself, never ask the user to run them
 - You MUST use ```bash blocks to run commands
+- ONLY use ```bash blocks for commands you want executed — NEVER for code examples
+- For code examples in other languages, use the appropriate language tag (```python, ```julia, etc.) or no tag
 - When you have enough info, give your final answer as plain text with no ```bash blocks
 - Keep commands short and focused
 - If a command fails, try a different approach
