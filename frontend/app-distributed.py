@@ -28,7 +28,7 @@ queue_history = {}  # {url: [{timestamp, queue_size}]}
 QUEUE_HISTORY_MAX = 86400  # ~1 day at 1s intervals
 
 # Persisted cumulative totals (survive frontend+backend restarts)
-persisted_totals = {'requests': 0, 'tokens': 0}
+persisted_totals = {'requests': 0, 'tokens': 0, 'prompt_tokens': 0, 'response_tokens': 0}
 last_backend_requests = {}  # {url: last_known_total} for computing deltas
 
 # Per-client and per-task cumulative usage
@@ -81,7 +81,7 @@ def periodic_save():
 load_history()
 Thread(target=periodic_save, daemon=True).start()
 
-def record_ip_tokens(ip, tokens, task_type='unknown'):
+def record_ip_tokens(ip, tokens, task_type='unknown', prompt_tokens=0, response_tokens=0):
     """Record token usage for a client IP and task type"""
     with ip_token_lock:
         # Always update cumulative by_client and by_task
@@ -93,6 +93,10 @@ def record_ip_tokens(ip, tokens, task_type='unknown'):
             usage_stats['by_task'][task_type] = {'requests': 0, 'tokens': 0}
         usage_stats['by_task'][task_type]['requests'] += 1
         usage_stats['by_task'][task_type]['tokens'] += tokens
+        # Accumulate prompt/response tokens for cloud cost tab (exclude test)
+        if task_type != 'test':
+            persisted_totals['prompt_tokens'] = persisted_totals.get('prompt_tokens', 0) + prompt_tokens
+            persisted_totals['response_tokens'] = persisted_totals.get('response_tokens', 0) + response_tokens
         # Record time-series entry only if there were tokens
         if tokens > 0:
             if ip not in ip_token_history:
@@ -258,7 +262,9 @@ def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
         
         # Record tokens for this client IP
         if client_ip:
-            record_ip_tokens(client_ip, result.get('total_tokens', 0), task_type)
+            record_ip_tokens(client_ip, result.get('total_tokens', 0), task_type,
+                           prompt_tokens=result.get('prompt_tokens', 0),
+                           response_tokens=result.get('response_tokens', 0))
         
         return result, 200
     except requests.exceptions.Timeout:
@@ -670,7 +676,7 @@ def test_models():
     _proj = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
     if _proj not in sys.path:
         sys.path.insert(0, _proj)
-    from shared.constants import TEST_PROMPT, model_size, cloud_cost_estimates
+    from shared.constants import TEST_PROMPT, model_size, cloud_cost_estimates, fetch_cloud_pricing
 
     data = request.json or {}
     prompt = data.get('prompt', TEST_PROMPT)
@@ -725,20 +731,45 @@ def test_models():
             'tok_per_sec': round(r / e, 1) if e > 0 else 0,
         })
 
-    # Cloud cost estimates using average tokens
+    # Cloud cost estimates using average tokens (refresh pricing from OpenRouter)
     ok = [r for r in results if 'error' not in r and r.get('total_tokens', 0) > 0]
     costs = []
+    pricing_source = 'none'
     if ok:
         avg_p = sum(r['prompt_tokens'] for r in ok) // len(ok)
         avg_r = sum(r['response_tokens'] for r in ok) // len(ok)
-        costs = cloud_cost_estimates(avg_p, avg_r)
+        fetch_cloud_pricing()  # refresh from OpenRouter (or fall back to static)
+        costs, pricing_source = cloud_cost_estimates(avg_p, avg_r)
 
     return jsonify({
         'prompt': prompt,
         'results': results,
         'skipped': skipped,
         'cloud_costs': costs,
+        'pricing_source': pricing_source,
     }), 200
+
+@app.route('/cloud-costs')
+def cloud_costs_tab():
+    """Running tab: what total usage (excluding /test) would cost on cloud providers."""
+    _proj = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+    if _proj not in sys.path:
+        sys.path.insert(0, _proj)
+    from shared.constants import cloud_cost_estimates, get_cloud_pricing
+
+    with ip_token_lock:
+        p_tok = persisted_totals.get('prompt_tokens', 0)
+        r_tok = persisted_totals.get('response_tokens', 0)
+
+    costs, source = cloud_cost_estimates(p_tok, r_tok)
+    return jsonify({
+        'prompt_tokens': p_tok,
+        'response_tokens': r_tok,
+        'total_tokens': p_tok + r_tok,
+        'cloud_costs': costs,
+        'pricing_source': source,
+        'note': 'Excludes tokens from /test benchmarks',
+    })
 
 @app.route('/upload', methods=['POST'])
 def upload():
