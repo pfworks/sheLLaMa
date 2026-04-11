@@ -21,7 +21,8 @@ SHELLAMA_BIN="${SHELLAMA_DIR}/shellama"
 export SHELLAMA_API="${SHELLAMA_API:-http://192.168.1.229:5000}"
 export SHELLAMA_MODEL="${SHELLAMA_MODEL:-qwen2.5-coder:7b}"
 
-# The , function — dispatches to Python CLI
+# Add red HAL eye to prompt
+PS1="🔴 ${PS1}"
 ,() {
     if [ $# -eq 0 ]; then
         echo "Usage: , <prompt> or ,<command> <args>"
