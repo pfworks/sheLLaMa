@@ -167,6 +167,7 @@ All backend endpoints above are proxied through the frontend, plus:
 | `/stop-all` | POST | Stop processing on all backends |
 | `/stop-backend` | POST | Stop a specific backend (takes `{"url": "..."}`) |
 | `/test` | POST | Benchmark models: `{"model": "all\|name", "prompt": "..."}` |
+| `/cloud-costs` | GET | Running tab: what total usage would cost on cloud providers |
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Cumulative usage by client IP and by task type |
@@ -202,7 +203,7 @@ See `docs/cloud-fallback-setup.md` for full guide.
 ## Persistence
 
 - **Backend** (`backend/app.py`): Saves `total_requests` and `total_tokens` to `shellama-stats.json` every 60s. Survives restarts.
-- **Frontend** (`frontend/app-distributed.py`): Saves `ip_token_history`, `backend_token_history`, `queue_history`, `persisted_totals`, `usage_stats` to `shellama-history.json` every 60s. Detects backend restarts (current < previous) and handles token delta correctly.
+- **Frontend** (`frontend/app-distributed.py`): Saves `ip_token_history`, `backend_token_history`, `queue_history`, `persisted_totals` (including `prompt_tokens`/`response_tokens` for cloud cost tab), `usage_stats` to `shellama-history.json` every 60s. Detects backend restarts (current < previous) and handles token delta correctly.
 
 ## Environment Variables
 
@@ -225,11 +226,23 @@ Frontend `/test` endpoint handles all benchmarking server-side. CLI just calls t
 - `POST /test {"model": "all"}` — benchmarks all runnable models with default prompt
 - `POST /test {"model": "llama3.2", "prompt": "..."}` — specific model(s), custom prompt
 - Filters by `max_model` from online backends via `model_size()` in `shared/constants.py`
-- Returns `results` (per-model: elapsed, tokens, tok/s), `skipped` (too large), `cloud_costs`
-- Cloud cost estimates use `CLOUD_PRICING` dict in `shared/constants.py`:
+- Returns `results` (per-model: elapsed, tokens, tok/s), `skipped` (too large), `cloud_costs`, `pricing_source`
+- Pricing fetched live from OpenRouter (`https://openrouter.ai/api/v1/models`) on each `/test` call
+- Falls back gracefully to `CLOUD_PRICING_STATIC` if OpenRouter unreachable
+- `pricing_source` in response: `openrouter` or `static`
+- 15 cloud providers mapped via `OPENROUTER_MODELS` dict in `shared/constants.py`:
   Claude 4 Sonnet/Haiku, Claude 3.5 Sonnet, GPT-4o/mini, OpenAI o3/o4-mini,
-  Azure GPT-4o, Gemini 2.5 Pro/Flash, Grok 3/mini, Llama 3 70B, Amazon Nova Pro/Lite
+  Azure GPT-4o, Gemini 2.5 Pro/Flash, Grok 3/mini, Llama 3.1 70B, Amazon Nova Pro/Lite/Micro
 - CLI interactive picker still fetches `/models` + `/queue-status` locally for the "(too large)" display, then sends selection to `/test`
+
+## Cloud Cost Running Tab
+
+`GET /cloud-costs` — shows what total non-benchmark usage would have cost on each cloud provider.
+
+- Tracks cumulative `prompt_tokens` and `response_tokens` in `persisted_totals` (survives restarts)
+- Excludes tokens from `/test` benchmarks (task_type == 'test')
+- `proxy_request` passes prompt/response token counts to `record_ip_tokens`
+- Uses same live OpenRouter pricing as `/test`
 
 ## Key Design Decisions
 
@@ -245,7 +258,7 @@ Frontend `/test` endpoint handles all benchmarking server-side. CLI just calls t
 
 6. **Model size filtering**: `max_model` in `backends.json` prevents routing large model requests to backends that can't handle them. Numeric size comparison via `model_size()` in `shared/constants.py`.
 
-7. **Shared constants**: `shared/constants.py` is the single source of truth for cloud pricing, test prompt, and `model_size()`. Frontend `/test` endpoint imports from it. CLI has no local pricing logic — just calls the API.
+7. **Shared constants**: `shared/constants.py` is the single source of truth for cloud pricing, test prompt, and `model_size()`. Frontend `/test` endpoint imports from it. CLI has no local pricing logic — just calls the API. Pricing fetched live from OpenRouter with static fallback.
 
 8. **Async HTTP in PowerShell GUIs**: Both `.ps1` and `.cmd` GUIs use `HttpWebRequest.BeginGetResponse` + `DoEvents()` loop to keep UI responsive during long API calls. `$script:formClosing` flag + `try/catch [WebException]` + `finally` cleanup prevents kernel security exceptions on form close.
 

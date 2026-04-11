@@ -311,7 +311,8 @@ def split_and_process(commands, model, chunk_size=10):
 
 @app.route('/')
 def index():
-    return send_from_directory('/export/html', 'index.html')
+    from flask import redirect
+    return redirect('/status')
 
 @app.route('/status')
 def status_page():

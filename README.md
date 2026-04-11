@@ -257,6 +257,7 @@ curl http://server:5000/queue-status
 | `/models` | GET | List available Ollama models (deduplicated across backends) |
 | `/image-models` | GET | List image generation models |
 | `/test` | POST | Benchmark models: `{"model": "all\|name", "prompt": "..."}` |
+| `/cloud-costs` | GET | Running tab: what total usage would cost on cloud providers |
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Cumulative usage by client IP and by task type |
@@ -373,6 +374,8 @@ Use `,test` in the CLI to compare models side by side:
 
 Output includes a comparison table with time, token counts, and tokens/sec for each model, followed by cloud cost estimates showing what the same request would cost on Claude, GPT-4o, Gemini, Grok, Llama 3, and Amazon Nova via cloud providers.
 
+Pricing is fetched live from OpenRouter on each test run. If OpenRouter is unreachable, static fallback prices are used. The response includes `pricing_source` (`openrouter` or `static`).
+
 Models that are too large for your backends (based on `max_model` in `backends.json`) are automatically skipped when testing all. They show as "(too large)" in the interactive picker.
 
 To benchmark via the API directly:
@@ -391,8 +394,21 @@ curl -X POST http://server:5000/test \
 # Response:
 # {"prompt": "...", "results": [{model, elapsed, prompt_tokens, response_tokens,
 #   total_tokens, tok_per_sec}], "skipped": [...], "cloud_costs": [{provider,
-#   input_cost, output_cost, total_cost}]}
+#   input_cost, output_cost, total_cost}], "pricing_source": "openrouter"}
 ```
+
+### Cloud Cost Running Tab
+
+Track what your total usage would have cost on cloud providers:
+
+```bash
+curl http://server:5000/cloud-costs
+# {"prompt_tokens": 1234, "response_tokens": 5678, "total_tokens": 6912,
+#  "pricing_source": "openrouter", "note": "Excludes tokens from /test benchmarks",
+#  "cloud_costs": [{"provider": "Claude 4 Sonnet", "total_cost": 0.091170}, ...]}
+```
+
+Tokens from `/test` benchmarks are excluded so the tab reflects real usage only. The tab persists across restarts.
 
 ## Troubleshooting
 

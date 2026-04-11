@@ -14,6 +14,11 @@
         .nav a:hover { background: #00ff0033; }
         .summary { background: #2b2b2b; border: 2px solid #00ff00; padding: 20px; margin: 20px 0; border-radius: 5px; }
         .summary-item { display: inline-block; margin: 10px 20px; font-size: 18px; }
+        .cost-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .cost-table th, .cost-table td { text-align: left; padding: 6px 12px; border-bottom: 1px solid #333; }
+        .cost-table th { color: #00ff00; opacity: 0.7; }
+        .cost-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        .section-title { font-size: 16px; margin: 20px 0 10px; opacity: 0.8; }
         .refresh-info { text-align: center; margin-top: 20px; font-size: 14px; opacity: 0.7; }
         a { color: #00ff00; }
     </style>
@@ -35,7 +40,17 @@
             <div class="summary-item">Total Tokens: <span id="total-tokens">-</span></div>
         </div>
 
-        <div class="refresh-info">Auto-refreshing every 2 seconds</div>
+        <div class="summary">
+            <div class="section-title">Cloud Cost Running Tab <span id="pricing-source" style="opacity:0.5"></span></div>
+            <div style="margin-bottom:8px; opacity:0.7; font-size:13px;">What your total usage would cost on cloud providers (excludes benchmarks)</div>
+            <div style="margin-bottom:10px;">Prompt tokens: <span id="cost-prompt-tokens">-</span> &nbsp;|&nbsp; Response tokens: <span id="cost-response-tokens">-</span></div>
+            <table class="cost-table">
+                <thead><tr><th>Provider</th><th style="text-align:right">Input</th><th style="text-align:right">Output</th><th style="text-align:right">Total</th></tr></thead>
+                <tbody id="cost-table-body"></tbody>
+            </table>
+        </div>
+
+        <div class="refresh-info">Auto-refreshing every 2 seconds (costs every 10 seconds)</div>
     </div>
 
     <script>
@@ -48,8 +63,24 @@
                 document.getElementById('total-tokens').textContent = (data.total_tokens || 0).toLocaleString();
             }).catch(() => {});
         }
+        function updateCosts() {
+            fetch('/cloud-costs').then(r => r.json()).then(data => {
+                document.getElementById('cost-prompt-tokens').textContent = (data.prompt_tokens || 0).toLocaleString();
+                document.getElementById('cost-response-tokens').textContent = (data.response_tokens || 0).toLocaleString();
+                document.getElementById('pricing-source').textContent = '(' + (data.pricing_source || 'unknown') + ')';
+                const tbody = document.getElementById('cost-table-body');
+                tbody.innerHTML = '';
+                (data.cloud_costs || []).forEach(c => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td>${c.provider}</td><td class="num">$${c.input_cost.toFixed(6)}</td><td class="num">$${c.output_cost.toFixed(6)}</td><td class="num">$${c.total_cost.toFixed(6)}</td>`;
+                    tbody.appendChild(tr);
+                });
+            }).catch(() => {});
+        }
         updateStatus();
+        updateCosts();
         setInterval(updateStatus, 2000);
+        setInterval(updateCosts, 10000);
     </script>
 </body>
 </html>
