@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sheLLaMa - Certificates</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #1e1e1e; color: #00ff00; padding: 20px; margin: 0; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; border-bottom: 2px solid #00ff00; padding-bottom: 10px; }
+        .nav { text-align: center; margin: 20px 0; }
+        .nav a { color: #00ff00; border: 2px solid #00ff00; padding: 10px 24px; margin: 0 5px; text-decoration: none; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 16px; }
+        .nav a.active { background: #00ff00; color: #000; }
+        .nav a:hover { background: #00ff0033; }
+        a { color: #00ff00; }
+        .section { background: #2b2b2b; border: 2px solid #00ff00; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .section-title { font-size: 16px; margin-bottom: 15px; }
+        .btn { background: #2b2b2b; color: #00ff00; border: 1px solid #00ff00; padding: 6px 16px; cursor: pointer; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; margin: 2px; }
+        .btn:hover { background: #00ff0033; }
+        .btn.danger { border-color: #ff4444; color: #ff4444; }
+        .btn.danger:hover { background: #ff444433; }
+        .btn.primary { background: #00ff0033; }
+        input, select { background: #1e1e1e; color: #00ff00; border: 1px solid #00ff00; padding: 6px 10px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; margin: 2px; }
+        input { width: 250px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #333; }
+        th { opacity: 0.7; }
+        .status { margin: 10px 0; padding: 10px; border-radius: 3px; display: none; }
+        .status.ok { background: #00ff0022; border: 1px solid #00ff00; display: block; }
+        .status.err { background: #ff444422; border: 1px solid #ff4444; color: #ff4444; display: block; }
+        .no-ca { text-align: center; padding: 40px; opacity: 0.7; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>sheLLaMa - Certificate Management</h1>
+
+        <div class="nav">
+            <a href="/status">Overview</a>
+            <a href="/backends">Backends</a>
+            <a href="/stats">Stats</a>
+            <a href="/certs" class="active">Certs</a>
+        </div>
+
+        <div id="status-msg" class="status"></div>
+
+        <div class="section" id="ca-section">
+            <div class="section-title">Certificate Authority</div>
+            <div id="ca-status"></div>
+        </div>
+
+        <div class="section" id="generate-section" style="display:none">
+            <div class="section-title">Generate Certificate</div>
+            <div>
+                <select id="cert-type">
+                    <option value="server">Server</option>
+                    <option value="client">Client</option>
+                </select>
+                <input id="cert-name" placeholder="Name (e.g. backend-1)">
+                <input id="cert-sans" placeholder="SANs: host1,host2,localhost (server only)">
+                <input id="cert-days" placeholder="Days (default: 3650)" style="width:150px">
+                <button class="btn primary" onclick="generateCert()">Generate</button>
+            </div>
+        </div>
+
+        <div class="section" id="certs-section" style="display:none">
+            <div class="section-title">Certificates</div>
+            <table>
+                <thead><tr><th>File</th><th>Subject</th><th>Expires</th><th>Actions</th></tr></thead>
+                <tbody id="cert-table"></tbody>
+            </table>
+        </div>
+
+        <div style="margin-top:10px; opacity:0.5; font-size:12px;">PKI directory: <span id="cert-dir">-</span></div>
+    </div>
+
+    <script>
+        function showMsg(text, ok) {
+            const el = document.getElementById('status-msg');
+            el.textContent = text;
+            el.className = 'status ' + (ok ? 'ok' : 'err');
+            setTimeout(() => { el.style.display = 'none'; }, 5000);
+        }
+
+        function loadCerts() {
+            fetch('/api/certs').then(r => r.json()).then(data => {
+                document.getElementById('cert-dir').textContent = data.cert_dir;
+                const caDiv = document.getElementById('ca-status');
+                if (data.has_ca) {
+                    const ca = data.certs.find(c => c.file === 'ca-cert.pem');
+                    caDiv.innerHTML = `<span style="color:#44ff44">✓ CA exists</span>` +
+                        (ca ? ` — ${ca.subject} (expires ${ca.expires})` : '') +
+                        ` <button class="btn" onclick="downloadCert('ca-cert.pem')">Download CA</button>`;
+                    document.getElementById('generate-section').style.display = '';
+                    document.getElementById('certs-section').style.display = '';
+                } else {
+                    caDiv.innerHTML = `<div class="no-ca">No Certificate Authority found.<br><br>` +
+                        `<input id="ca-org" placeholder="Organization (default: sheLLaMa)" style="width:300px"><br><br>` +
+                        `<button class="btn primary" onclick="generateCA()">Generate CA</button></div>`;
+                    document.getElementById('generate-section').style.display = 'none';
+                    document.getElementById('certs-section').style.display = 'none';
+                }
+                const tbody = document.getElementById('cert-table');
+                tbody.innerHTML = '';
+                data.certs.filter(c => c.file !== 'ca-cert.pem').forEach(c => {
+                    const name = c.file.replace('-cert.pem', '');
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `<td>${c.file}</td><td>${c.subject}</td><td>${c.expires}</td>` +
+                        `<td><button class="btn" onclick="downloadCert('${c.file}')">Cert</button>` +
+                        `<button class="btn" onclick="downloadCert('${name}-key.pem')">Key</button>` +
+                        `<button class="btn danger" onclick="revokeCert('${c.file}')">Revoke</button>` +
+                        `<button class="btn danger" onclick="deleteCert('${name}')">Delete</button></td>`;
+                    tbody.appendChild(tr);
+                });
+            }).catch(e => showMsg('Error loading certs: ' + e, false));
+        }
+
+        function generateCA() {
+            const org = document.getElementById('ca-org')?.value || 'sheLLaMa';
+            fetch('/api/certs/generate-ca', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({org: org, cn: org + '-CA'})
+            }).then(r => r.json()).then(d => {
+                if (d.error) showMsg(d.error, false); else { showMsg('CA generated', true); loadCerts(); }
+            });
+        }
+
+        function generateCert() {
+            const type = document.getElementById('cert-type').value;
+            const name = document.getElementById('cert-name').value;
+            const sans = document.getElementById('cert-sans').value;
+            const days = document.getElementById('cert-days').value || '3650';
+            if (!name) { showMsg('Name is required', false); return; }
+            fetch('/api/certs/generate', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({name, type, sans, days: parseInt(days)})
+            }).then(r => r.json()).then(d => {
+                if (d.error) showMsg(d.error, false); else { showMsg(`Certificate ${name} generated`, true); loadCerts(); document.getElementById('cert-name').value = ''; document.getElementById('cert-sans').value = ''; }
+            });
+        }
+
+        function revokeCert(file) {
+            if (prompt('Type DELETE to revoke ' + file) !== 'DELETE') return;
+            fetch('/api/certs/revoke', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({file})
+            }).then(r => r.json()).then(d => {
+                if (d.error) showMsg(d.error, false); else { showMsg('Revoked ' + file, true); loadCerts(); }
+            });
+        }
+
+        function deleteCert(name) {
+            if (prompt('Type DELETE to permanently delete ' + name) !== 'DELETE') return;
+            fetch('/api/certs/delete', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({name})
+            }).then(r => r.json()).then(d => {
+                if (d.error) showMsg(d.error, false); else { showMsg('Deleted: ' + d.deleted.join(', '), true); loadCerts(); }
+            });
+        }
+
+        function downloadCert(filename) {
+            window.open('/api/certs/download/' + filename);
+        }
+
+        loadCerts();
+    </script>
+</body>
+</html>
