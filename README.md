@@ -64,7 +64,6 @@ shellama/
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details
 │       ├── stats.html         # Admin: charts and graphs
-│       └── certs.html         # Admin: certificate management
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook
 │   ├── deploy-frontend.yml    # Frontend playbook
@@ -203,7 +202,6 @@ Access at `http://your-server:5000` (redirects to `/status`)
 | Status | `/status` | Summary: total requests, tokens, active backends, queue size, cloud cost tab |
 | Backends | `/backends` | Per-backend details: online/offline, CPU/RAM, weight, models, active task |
 | Stats | `/stats` | Charts: queue size and token usage over time (hour/day/week/month/year) |
-| Certs | `/certs` | Certificate management: generate CA, server/client certs, revoke, download |
 
 ## REST API
 
@@ -374,7 +372,6 @@ tail -f /var/log/ansible-ollama.log
 | `SHELLAMA_BACKEND_CERT` | *(empty)* | Client cert for frontend→backend mTLS |
 | `SHELLAMA_BACKEND_KEY` | *(empty)* | Client key for frontend→backend mTLS |
 | `SHELLAMA_BACKEND_CA` | *(empty)* | CA to verify backend server certs |
-| `SHELLAMA_CERT_DIR` | `/etc/shellama/pki` | PKI directory for cert management |
 
 ### Recommended Models for CPU
 
@@ -434,6 +431,20 @@ curl http://server:5000/cloud-costs
 ```
 
 Tokens from `/test` benchmarks are excluded so the tab reflects real usage only. The tab persists across restarts.
+
+## Certificate Management
+
+```bash
+bin/generate-certs.sh init                           # Generate CA
+bin/generate-certs.sh server backend-1 192.168.1.230,localhost  # Server cert with SANs
+bin/generate-certs.sh server frontend 192.168.1.229,localhost   # Frontend server cert
+bin/generate-certs.sh client frontend-mtls           # Client cert for mTLS
+bin/generate-certs.sh list                           # List all certs
+bin/generate-certs.sh revoke backend-1               # Revoke a cert
+bin/generate-certs.sh delete backend-1               # Delete cert files
+```
+
+IP addresses in SANs are automatically detected and added as `IP:` entries. PKI directory defaults to `/etc/shellama/pki` (set `SHELLAMA_CERT_DIR` to change).
 
 ## Troubleshooting
 

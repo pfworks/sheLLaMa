@@ -31,7 +31,6 @@ shellama/
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details with strength bars
 │       ├── stats.html         # Admin: Chart.js graphs with time range selector
-│       └── certs.html         # Admin: certificate management
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook (src paths: ../backend/, ../frontend/web/)
 │   ├── deploy-frontend.yml    # Frontend playbook (src paths: ../frontend/, ../frontend/web/)
@@ -47,9 +46,9 @@ shellama/
 │   ├── cloud-fallback-setup.tex  # LaTeX source
 │   └── SECURITY_CLEANUP.md
 ├── bin/                        # Certificate management
-│   ├── generate-certs.sh
-│   ├── generate-user-cert.sh
-│   └── revoke-cert.sh
+│   ├── generate-certs.sh      # CA, server, client cert generation + revoke + delete
+│   ├── generate-user-cert.sh  # Per-user certificate generation
+│   └── revoke-cert.sh         # Certificate revocation (legacy)
 ├── README.md
 ├── SESSION_SUMMARY.md          # This file — read at session start
 └── .gitignore
@@ -141,7 +140,6 @@ Clients → app-distributed.py (Frontend :5000) → Backend Farm
 - **Status** (`frontend/web/status.html`) — `/status` — Summary: total requests, tokens, active backends, queue size, cloud cost running tab (per-provider costs, auto-refreshes every 10s)
 - **Backends** (`frontend/web/backends.html`) — `/backends` — Per-backend: online/offline, CPU/RAM/arch, weight, models, active task, strength bars
 - **Stats** (`frontend/web/stats.html`) — `/stats` — Chart.js graphs: queue size and token usage over time, time range selector (hour/day/week/month/year)
-- **Certs** (`frontend/web/certs.html`) — `/certs` — Generate CA, server/client certs with SANs, list, download, revoke, delete
 
 ## All Client Commands (prefix with `,`)
 
@@ -194,13 +192,6 @@ All backend endpoints above are proxied through the frontend, plus:
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Cumulative usage by client IP and by task type |
-| `/certs` | GET | Serve `certs.html` |
-| `/api/certs` | GET | List all certificates in PKI directory |
-| `/api/certs/generate-ca` | POST | Generate Certificate Authority |
-| `/api/certs/generate` | POST | Generate server/client cert: `{"name", "type", "sans", "days"}` |
-| `/api/certs/revoke` | POST | Revoke a certificate |
-| `/api/certs/delete` | POST | Delete cert + key + req files |
-| `/api/certs/download/<f>` | GET | Download cert/key file |
 
 ## Load Balancing
 
@@ -254,7 +245,6 @@ See `docs/cloud-fallback-setup.md` for full guide.
 | `SHELLAMA_BACKEND_CERT` | *(empty)* | Client cert for frontend→backend mTLS (frontend) |
 | `SHELLAMA_BACKEND_KEY` | *(empty)* | Client key for frontend→backend mTLS (frontend) |
 | `SHELLAMA_BACKEND_CA` | *(empty)* | CA to verify backend server certs (frontend) |
-| `SHELLAMA_CERT_DIR` | `/etc/shellama/pki` | PKI directory for cert management API (frontend) |
 
 ## Benchmarking (`,test`)
 
@@ -299,7 +289,8 @@ Frontend `/test` endpoint handles all benchmarking server-side. CLI just calls t
 
 8. **Async HTTP in PowerShell GUIs**: Both `.ps1` and `.cmd` GUIs use `HttpWebRequest.BeginGetResponse` + `DoEvents()` loop to keep UI responsive during long API calls. `$script:formClosing` flag + `try/catch [WebException]` + `finally` cleanup prevents kernel security exceptions on form close.
 
-9. **Optional TLS/mTLS**: Encryption is opt-in via env vars. Backend can serve HTTPS and require client certs. Frontend can serve HTTPS to clients and present client certs to backends. All frontend→backend requests go through `_backend_get`/`_backend_post` helpers that attach certs. Cert management via `/certs` admin page and `/api/certs` endpoints using openssl subprocess calls. PKI stored in `SHELLAMA_CERT_DIR`.
+9. **Optional TLS/mTLS**: Encryption is opt-in via env vars. Backend can serve HTTPS and require client certs. Frontend can serve HTTPS to clients and present client certs to backends. All frontend→backend requests go through `_backend_get`/`_backend_post` helpers that attach certs. Cert management via `bin/generate-certs.sh` script (init, server, client, list, revoke, delete). PKI stored in `/etc/shellama/pki` by default.
+
 
 ## Known Issues
 
