@@ -63,7 +63,8 @@ shellama/
 │       ├── index.html         # Legacy web UI (/ redirects to /status)
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details
-│       └── stats.html         # Admin: charts and graphs
+│       ├── stats.html         # Admin: charts and graphs
+│       └── certs.html         # Admin: certificate management
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook
 │   ├── deploy-frontend.yml    # Frontend playbook
@@ -202,6 +203,7 @@ Access at `http://your-server:5000` (redirects to `/status`)
 | Status | `/status` | Summary: total requests, tokens, active backends, queue size, cloud cost tab |
 | Backends | `/backends` | Per-backend details: online/offline, CPU/RAM, weight, models, active task |
 | Stats | `/stats` | Charts: queue size and token usage over time (hour/day/week/month/year) |
+| Certs | `/certs` | Certificate management: generate CA, server/client certs, revoke, download |
 
 ## REST API
 
@@ -366,6 +368,13 @@ tail -f /var/log/ansible-ollama.log
 | `OPENROUTER_MODEL` | `anthropic/claude-3.5-sonnet` | Cloud fallback model |
 | `OPENROUTER_URL` | `https://openrouter.ai/api/v1/chat/completions` | Cloud fallback endpoint (change for LiteLLM) |
 | `USE_CLOUD_FALLBACK` | `false` | Enable cloud fallback |
+| `SHELLAMA_TLS_CERT` | *(empty)* | Server TLS certificate path (enables HTTPS) |
+| `SHELLAMA_TLS_KEY` | *(empty)* | Server TLS private key path |
+| `SHELLAMA_TLS_CA` | *(empty)* | CA cert for client verification (backend mTLS) |
+| `SHELLAMA_BACKEND_CERT` | *(empty)* | Client cert for frontend→backend mTLS |
+| `SHELLAMA_BACKEND_KEY` | *(empty)* | Client key for frontend→backend mTLS |
+| `SHELLAMA_BACKEND_CA` | *(empty)* | CA to verify backend server certs |
+| `SHELLAMA_CERT_DIR` | `/etc/shellama/pki` | PKI directory for cert management |
 
 ### Recommended Models for CPU
 

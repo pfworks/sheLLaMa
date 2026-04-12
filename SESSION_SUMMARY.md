@@ -30,7 +30,8 @@ shellama/
 │       ├── index.html         # Legacy web UI (/ redirects to /status)
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details with strength bars
-│       └── stats.html         # Admin: Chart.js graphs with time range selector
+│       ├── stats.html         # Admin: Chart.js graphs with time range selector
+│       └── certs.html         # Admin: certificate management
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook (src paths: ../backend/, ../frontend/web/)
 │   ├── deploy-frontend.yml    # Frontend playbook (src paths: ../frontend/, ../frontend/web/)
@@ -140,6 +141,7 @@ Clients → app-distributed.py (Frontend :5000) → Backend Farm
 - **Status** (`frontend/web/status.html`) — `/status` — Summary: total requests, tokens, active backends, queue size, cloud cost running tab (per-provider costs, auto-refreshes every 10s)
 - **Backends** (`frontend/web/backends.html`) — `/backends` — Per-backend: online/offline, CPU/RAM/arch, weight, models, active task, strength bars
 - **Stats** (`frontend/web/stats.html`) — `/stats` — Chart.js graphs: queue size and token usage over time, time range selector (hour/day/week/month/year)
+- **Certs** (`frontend/web/certs.html`) — `/certs` — Generate CA, server/client certs with SANs, list, download, revoke, delete
 
 ## All Client Commands (prefix with `,`)
 
@@ -192,6 +194,13 @@ All backend endpoints above are proxied through the frontend, plus:
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Cumulative usage by client IP and by task type |
+| `/certs` | GET | Serve `certs.html` |
+| `/api/certs` | GET | List all certificates in PKI directory |
+| `/api/certs/generate-ca` | POST | Generate Certificate Authority |
+| `/api/certs/generate` | POST | Generate server/client cert: `{"name", "type", "sans", "days"}` |
+| `/api/certs/revoke` | POST | Revoke a certificate |
+| `/api/certs/delete` | POST | Delete cert + key + req files |
+| `/api/certs/download/<f>` | GET | Download cert/key file |
 
 ## Load Balancing
 
@@ -239,6 +248,13 @@ See `docs/cloud-fallback-setup.md` for full guide.
 | `OPENROUTER_MODEL` | `anthropic/claude-3.5-sonnet` | Cloud fallback model (backends) |
 | `OPENROUTER_URL` | `https://openrouter.ai/api/v1/chat/completions` | Cloud fallback endpoint (backends, change for LiteLLM) |
 | `USE_CLOUD_FALLBACK` | `false` | Enable cloud fallback (backends) |
+| `SHELLAMA_TLS_CERT` | *(empty)* | Server TLS cert path — enables HTTPS (backends + frontend) |
+| `SHELLAMA_TLS_KEY` | *(empty)* | Server TLS key path (backends + frontend) |
+| `SHELLAMA_TLS_CA` | *(empty)* | CA cert for client verification — enables mTLS (backends) |
+| `SHELLAMA_BACKEND_CERT` | *(empty)* | Client cert for frontend→backend mTLS (frontend) |
+| `SHELLAMA_BACKEND_KEY` | *(empty)* | Client key for frontend→backend mTLS (frontend) |
+| `SHELLAMA_BACKEND_CA` | *(empty)* | CA to verify backend server certs (frontend) |
+| `SHELLAMA_CERT_DIR` | `/etc/shellama/pki` | PKI directory for cert management API (frontend) |
 
 ## Benchmarking (`,test`)
 
@@ -282,6 +298,8 @@ Frontend `/test` endpoint handles all benchmarking server-side. CLI just calls t
 7. **Shared constants**: `shared/constants.py` is the single source of truth for cloud pricing, test prompt, and `model_size()`. Frontend `/test` endpoint imports from it. CLI has no local pricing logic — just calls the API. Pricing fetched live from OpenRouter with static fallback.
 
 8. **Async HTTP in PowerShell GUIs**: Both `.ps1` and `.cmd` GUIs use `HttpWebRequest.BeginGetResponse` + `DoEvents()` loop to keep UI responsive during long API calls. `$script:formClosing` flag + `try/catch [WebException]` + `finally` cleanup prevents kernel security exceptions on form close.
+
+9. **Optional TLS/mTLS**: Encryption is opt-in via env vars. Backend can serve HTTPS and require client certs. Frontend can serve HTTPS to clients and present client certs to backends. All frontend→backend requests go through `_backend_get`/`_backend_post` helpers that attach certs. Cert management via `/certs` admin page and `/api/certs` endpoints using openssl subprocess calls. PKI stored in `SHELLAMA_CERT_DIR`.
 
 ## Known Issues
 
