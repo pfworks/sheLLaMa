@@ -31,6 +31,7 @@ shellama/
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details with strength bars
 │       ├── stats.html         # Admin: Chart.js graphs with time range selector
+│       └── costs.html         # Admin: cloud cost tracking with time ranges
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook (src paths: ../backend/, ../frontend/web/)
 │   ├── deploy-frontend.yml    # Frontend playbook (src paths: ../frontend/, ../frontend/web/)
@@ -140,6 +141,7 @@ Clients → app-distributed.py (Frontend :5000) → Backend Farm
 - **Status** (`frontend/web/status.html`) — `/status` — Summary: total requests, tokens, active backends, queue size, cloud cost running tab (per-provider costs, auto-refreshes every 10s)
 - **Backends** (`frontend/web/backends.html`) — `/backends` — Per-backend: online/offline, CPU/RAM/arch, weight, models, active task, strength bars
 - **Stats** (`frontend/web/stats.html`) — `/stats` — Chart.js graphs: queue size and token usage over time, time range selector (hour/day/week/month/year)
+- **Costs** (`frontend/web/costs.html`) — `/costs` — Cloud cost tracking: hypothetical vs actual fallback spend, filterable by day/week/month/year/custom date range
 
 ## All Client Commands (prefix with `,`)
 
@@ -192,6 +194,10 @@ All backend endpoints above are proxied through the frontend, plus:
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Cumulative usage by client IP and by task type |
+| `/costs` | GET | Serve `costs.html` |
+| `/cost-history` | GET | Token totals filtered by time: `?since=TIMESTAMP&until=TIMESTAMP` |
+| `/api/backends` | GET/POST | Get or update backend config (tasks, weight, max_model) |
+| `/auto-fallback` | GET/POST | Get or toggle auto cloud fallback mode |
 
 ## Load Balancing
 
@@ -245,6 +251,7 @@ See `docs/cloud-fallback-setup.md` for full guide.
 | `SHELLAMA_BACKEND_CERT` | *(empty)* | Client cert for frontend→backend mTLS (frontend) |
 | `SHELLAMA_BACKEND_KEY` | *(empty)* | Client key for frontend→backend mTLS (frontend) |
 | `SHELLAMA_BACKEND_CA` | *(empty)* | CA to verify backend server certs (frontend) |
+| `SHELLAMA_DOWNLOAD_DIR` | *(current dir)* | Default save directory for generated images |
 
 ## Benchmarking (`,test`)
 

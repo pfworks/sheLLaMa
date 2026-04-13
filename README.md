@@ -64,6 +64,7 @@ shellama/
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details
 │       ├── stats.html         # Admin: charts and graphs
+│       └── costs.html         # Admin: cloud cost tracking
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook
 │   ├── deploy-frontend.yml    # Frontend playbook
@@ -202,6 +203,7 @@ Access at `http://your-server:5000` (redirects to `/status`)
 | Status | `/status` | Summary: total requests, tokens, active backends, queue size, cloud cost tab |
 | Backends | `/backends` | Per-backend details: online/offline, CPU/RAM, weight, models, active task |
 | Stats | `/stats` | Charts: queue size and token usage over time (hour/day/week/month/year) |
+| Costs | `/costs` | Cloud cost tracking by day/week/month/year/custom range, fallback spend |
 
 ## REST API
 
@@ -280,6 +282,10 @@ curl http://server:5000/queue-status
 | `/stop` | POST | Stop active task (single backend) |
 | `/stop-all` | POST | Stop all backends (frontend only) |
 | `/stop-backend` | POST | Stop a specific backend (frontend only, takes `{"url": "..."}`) |
+| `/costs` | GET | Cost tracking page (day/week/month/year/custom range) |
+| `/cost-history` | GET | Token totals filtered by time: `?since=TIMESTAMP&until=TIMESTAMP` |
+| `/api/backends` | GET/POST | Get or update backend config (tasks, weight, max_model) |
+| `/auto-fallback` | GET/POST | Get or toggle auto cloud fallback mode |
 
 ## Deployment
 
@@ -372,6 +378,7 @@ tail -f /var/log/ansible-ollama.log
 | `SHELLAMA_BACKEND_CERT` | *(empty)* | Client cert for frontend→backend mTLS |
 | `SHELLAMA_BACKEND_KEY` | *(empty)* | Client key for frontend→backend mTLS |
 | `SHELLAMA_BACKEND_CA` | *(empty)* | CA to verify backend server certs |
+| `SHELLAMA_DOWNLOAD_DIR` | *(current dir)* | Default save directory for generated images |
 
 ### Recommended Models for CPU
 
