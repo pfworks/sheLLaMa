@@ -133,16 +133,21 @@ def load_backends():
     try:
         with open(config_file, 'r') as f:
             backends = json.load(f)['backends']
-            # Support both old format (list of strings) and new format (list of dicts)
             if backends and isinstance(backends[0], str):
-                return [{'url': url, 'weight': 1, 'max_model': 'codellama:70b'} for url in backends]
-            # Ensure max_model exists
+                return [{'url': url, 'weight': 1, 'max_model': 'codellama:70b', 'tasks': ['all']} for url in backends]
             for b in backends:
                 if 'max_model' not in b:
                     b['max_model'] = 'codellama:70b'
+                if 'tasks' not in b:
+                    b['tasks'] = ['all']
             return backends
     except:
-        return [{'url': 'http://localhost:5001', 'weight': 1, 'max_model': 'codellama:70b'}]
+        return [{'url': 'http://localhost:5001', 'weight': 1, 'max_model': 'codellama:70b', 'tasks': ['all']}]
+
+def save_backends():
+    config_file = os.path.join(os.path.dirname(__file__), 'backends.json')
+    with open(config_file, 'w') as f:
+        json.dump({'backends': BACKENDS}, f, indent=2)
 
 BACKENDS = load_backends()
 
@@ -164,7 +169,7 @@ MODEL_SIZES = {
 }
 
 # Track backend availability and queue size
-backend_status = {b['url']: {'available': True, 'queue_size': 0, 'weight': b['weight'], 'max_model': b['max_model']} for b in BACKENDS}
+backend_status = {b['url']: {'available': True, 'queue_size': 0, 'weight': b['weight'], 'max_model': b['max_model'], 'tasks': b.get('tasks', ['all'])} for b in BACKENDS}
 backend_lock = Lock()
 
 def get_backend_queue_size(url):
@@ -179,7 +184,7 @@ def get_backend_queue_size(url):
     except:
         return None
 
-def get_available_backend(requested_model='codellama:13b', wait=True, timeout=300):
+def get_available_backend(requested_model='codellama:13b', wait=True, timeout=300, task_type='unknown'):
     """Get backend with lowest weighted queue score that supports the requested model.
     Among same-weight backends, prefer those with more free RAM and lower CPU usage."""
     import time
@@ -215,6 +220,10 @@ def get_available_backend(requested_model='codellama:13b', wait=True, timeout=30
             available = []
             for url in backend_status.keys():
                 if backend_status[url]['available']:
+                    # Check task assignment
+                    tasks = backend_status[url].get('tasks', ['all'])
+                    if 'all' not in tasks and task_type not in tasks:
+                        continue
                     max_model = backend_status[url]['max_model']
                     max_size = MODEL_SIZES.get(max_model, 4)
                     if requested_model == 'none' or requested_size <= max_size:
@@ -258,7 +267,7 @@ def release_backend(url):
 def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
     """Send request to available backend with keepalive"""
     model = data.get('model', 'codellama:13b')
-    backend = get_available_backend(model)
+    backend = get_available_backend(model, task_type=task_type)
     if not backend:
         return {'error': f'No backends available that support model {model}. Check backends.json configuration.'}, 200
     
@@ -289,7 +298,7 @@ def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
         if result.get('fallback_available') and persisted_totals.get('auto_fallback', False):
             data['force_cloud'] = True
             release_backend(backend)
-            backend2 = get_available_backend(model)
+            backend2 = get_available_backend(model, task_type=task_type)
             if backend2:
                 resp2 = session.post(f"{backend2}{endpoint}", json=data, timeout=3600, stream=False)
                 result = resp2.json()
@@ -395,7 +404,7 @@ def queue_status():
             backends_info.append({
                 'url': url,
                 'weight': weight,
-                'max_model': max_model,
+                'max_model': max_model, 'tasks': backend.get('tasks', ['all']),
                 'queue_size': queue_size,
                 'active': is_active,
                 'status': 'online',
@@ -417,7 +426,7 @@ def queue_status():
             backends_info.append({
                 'url': url,
                 'weight': weight,
-                'max_model': max_model,
+                'max_model': max_model, 'tasks': backend.get('tasks', ['all']),
                 'queue_size': 0,
                 'active': False,
                 'status': 'offline',
@@ -906,6 +915,31 @@ def cost_history():
             'total_tokens': fb_p + fb_r, 'cloud_costs': actual,
         },
     })
+
+@app.route('/api/backends', methods=['GET', 'POST'])
+def api_backends():
+    """Get or update backend configuration (tasks, weight, max_model)."""
+    if request.method == 'POST':
+        updates = request.json or {}
+        url = updates.get('url', '')
+        for b in BACKENDS:
+            if b['url'] == url:
+                if 'tasks' in updates:
+                    b['tasks'] = updates['tasks']
+                    with backend_lock:
+                        backend_status[url]['tasks'] = updates['tasks']
+                if 'weight' in updates:
+                    b['weight'] = updates['weight']
+                    with backend_lock:
+                        backend_status[url]['weight'] = updates['weight']
+                if 'max_model' in updates:
+                    b['max_model'] = updates['max_model']
+                    with backend_lock:
+                        backend_status[url]['max_model'] = updates['max_model']
+                save_backends()
+                return jsonify({'status': 'ok', 'backend': b})
+        return jsonify({'error': 'Backend not found'}), 404
+    return jsonify({'backends': BACKENDS})
 
 @app.route('/auto-fallback', methods=['GET', 'POST'])
 def auto_fallback_setting():

@@ -142,6 +142,10 @@
                             <div class="hw-stat"><span class="label">RAM:</span> ${ramUsed.toFixed(1)} / ${backend.ram_total_gb} GB (${ramPct}%)</div>
                             <div class="hw-stat"><span class="label">Weight:</span> ${backend.weight}</div>
                             <div class="hw-stat"><span class="label">Max Model:</span> ${backend.max_model}</div>
+                            <div class="hw-stat"><span class="label">Tasks:</span>
+                                <span id="tasks-${encodeURIComponent(backend.url)}">${(backend.tasks || ['all']).join(', ')}</span>
+                                <button style="background:none;border:1px solid #00ff00;color:#00ff00;cursor:pointer;padding:1px 6px;border-radius:3px;font-family:monospace;font-size:11px;margin-left:5px;" onclick="editTasks('${backend.url}')">edit</button>
+                            </div>
                         </div>
                         <div class="backend-info">Queue Size: ${backend.queue_size}${modelInfo}</div>
                         ${taskHtml}
@@ -149,6 +153,23 @@
                     backendList.appendChild(div);
                 });
             }).catch(() => {});
+        }
+
+        function editTasks(url) {
+            const current = document.getElementById('tasks-' + encodeURIComponent(url))?.textContent || 'all';
+            const input = prompt(
+                'Enter task types (comma-separated):\n\n' +
+                'Options: all, chat, generate, explain, generate-code, explain-code, analyze, generate-image, test\n\n' +
+                'Current: ' + current,
+                current
+            );
+            if (input === null) return;
+            const tasks = input.split(',').map(t => t.trim()).filter(t => t);
+            fetch('/api/backends', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({url: url, tasks: tasks})
+            }).then(r => r.json()).then(d => {
+                if (d.error) alert(d.error); else updateBackends();
+            });
         }
 
         function stopBackend(url) {
