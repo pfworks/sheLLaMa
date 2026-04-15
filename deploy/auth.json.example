@@ -46,5 +46,19 @@
       "user": ["SheLLaMa-User"],
       "viewer": ["SheLLaMa-Viewer"]
     }
+  },
+
+  "_sso_authentik_example": {
+    "provider": "authentik",
+    "issuer": "https://authentik.example.com/application/o/shellama",
+    "client_id": "your-client-id",
+    "client_secret": "your-client-secret",
+    "secret_key": "random-flask-session-secret",
+    "default_role": "viewer",
+    "role_mapping": {
+      "admin": ["shellama-admin"],
+      "user": ["shellama-user"],
+      "viewer": ["shellama-viewer"]
+    }
   }
 }

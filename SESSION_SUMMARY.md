@@ -303,7 +303,7 @@ Frontend `/test` endpoint handles all benchmarking server-side. CLI just calls t
 
 10. **Authentication**: Two layers, both optional (disabled when `/etc/shellama/auth.json` missing):
     - **API keys** for CLI/API: `X-API-Key` header, 3 roles (admin/user/viewer), per-key model restrictions, per-key cloud fallback control, per-key token tracking in `usage_stats.by_key`
-    - **SSO (OIDC)** for web UI: Keycloak or Azure AD, role mapping from group claims, `/sso/login`, `/sso/callback`, `/sso/logout`, `/sso/userinfo` endpoints
+    - **SSO (OIDC)** for web UI: Keycloak, Azure AD, or Authentik, role mapping from group claims, `/sso/login`, `/sso/callback`, `/sso/logout`, `/sso/userinfo` endpoints
     - Config in `auth.json`: `api_keys` section + optional `sso` section with issuer/client_id/client_secret/role_mapping
 
 

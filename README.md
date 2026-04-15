@@ -455,7 +455,7 @@ curl -H "X-API-Key: sk-your-key" http://server:5000/chat ...
 export SHELLAMA_API_KEY=sk-your-key
 ```
 
-**SSO** (for web UI — Keycloak or Azure AD):
+**SSO** (for web UI — Keycloak, Azure AD, or Authentik):
 - Web pages redirect to SSO login when configured
 - Role mapped from group claims (admin/user/viewer)
 - Admin buttons hidden for non-admin roles
@@ -473,7 +473,7 @@ cp deploy/auth.json.example /etc/shellama/auth.json
 # Edit API keys, optionally add SSO config
 ```
 
-See `deploy/auth.json.example` for Keycloak and Azure AD configuration.
+See `deploy/auth.json.example` for Keycloak, Azure AD, and Authentik configuration.
 
 ## Certificate Management
 

@@ -96,13 +96,19 @@ def get_sso_role(userinfo):
     sso = cfg.get('sso', {})
     role_mapping = sso.get('role_mapping', {})
 
-    # Check groups claim (Azure AD uses 'groups', Keycloak uses 'realm_access.roles' or 'groups')
+    # Check groups claim from various providers:
+    # - Azure AD: 'groups' (list of group IDs or names)
+    # - Keycloak: 'realm_access.roles' or 'groups'
+    # - Authentik: 'groups' (list of group names) or 'ak_proxy.user_attributes.groups'
     user_groups = set()
     user_groups.update(userinfo.get('groups', []))
     realm_access = userinfo.get('realm_access', {})
     user_groups.update(realm_access.get('roles', []))
-    # Also check roles claim directly
     user_groups.update(userinfo.get('roles', []))
+    # Authentik nested attributes
+    ak_proxy = userinfo.get('ak_proxy', {})
+    ak_attrs = ak_proxy.get('user_attributes', {})
+    user_groups.update(ak_attrs.get('groups', []))
 
     # Check from highest to lowest privilege
     for role in ['admin', 'user', 'viewer']:
