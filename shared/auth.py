@@ -42,9 +42,10 @@ _rate_tokens = {}
 
 
 def _check_rate_limit(key, key_info):
-    """Check rate limits. Returns error string or None."""
+    """Check rate limits and budget. Returns error string or None."""
     limits = key_info.get('rate_limit', {})
-    if not limits:
+    budget = key_info.get('budget', {})
+    if not limits and not budget:
         return None
 
     now = time.time()
@@ -62,22 +63,40 @@ def _check_rate_limit(key, key_info):
     tpd = limits.get('tpd')
     if tpd:
         day_start = now - 86400
-        day_tokens = sum(t for ts, t in _rate_tokens.get(key, []) if ts > day_start)
+        day_tokens = sum(e[1] for e in _rate_tokens.get(key, []) if e[0] > day_start)
         if day_tokens >= tpd:
             return f'Rate limit exceeded: {tpd} tokens/day'
+
+    # Budget per day (estimated cloud cost)
+    max_cost = budget.get('max_daily')
+    if max_cost:
+        day_start = now - 86400
+        entries = [e for e in _rate_tokens.get(key, []) if e[0] > day_start]
+        # Actual cloud fallback cost (real spend)
+        cloud_prompt = sum(e[2] for e in entries if e[4])
+        cloud_resp = sum(e[3] for e in entries if e[4])
+        # Hypothetical cost for local usage (what it would cost on cloud)
+        local_prompt = sum(e[2] for e in entries if not e[4])
+        local_resp = sum(e[3] for e in entries if not e[4])
+        # Use GPT-4o rates as reference for local, actual rates for cloud
+        actual_cost = (cloud_prompt * 2.50 + cloud_resp * 10.00) / 1_000_000
+        hypothetical_cost = (local_prompt * 2.50 + local_resp * 10.00) / 1_000_000
+        # Budget enforced on actual cloud spend only
+        if actual_cost >= max_cost:
+            return f'Budget exceeded: ${actual_cost:.4f} actual cloud spend of ${max_cost:.2f}/day limit'
 
     return None
 
 
-def record_rate_tokens(key, tokens):
-    """Record token usage for rate limiting."""
+def record_rate_tokens(key, tokens, prompt_tokens=0, response_tokens=0, cloud_fallback=False):
+    """Record token usage for rate limiting and budget tracking."""
     if key:
         if key not in _rate_tokens:
             _rate_tokens[key] = []
-        _rate_tokens[key].append((time.time(), tokens))
+        _rate_tokens[key].append((time.time(), tokens, prompt_tokens, response_tokens, cloud_fallback))
         # Trim old entries (keep 24h)
         cutoff = time.time() - 86400
-        _rate_tokens[key] = [(t, n) for t, n in _rate_tokens[key] if t > cutoff]
+        _rate_tokens[key] = [e for e in _rate_tokens[key] if e[0] > cutoff]
 
 
 def _load_config():

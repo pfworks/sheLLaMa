@@ -410,7 +410,10 @@ def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
         # Record tokens for rate limiting
         rate_key = getattr(request, '_shellama_key', None)
         if rate_key:
-            record_rate_tokens(rate_key, result.get('total_tokens', 0))
+            record_rate_tokens(rate_key, result.get('total_tokens', 0),
+                              prompt_tokens=result.get('prompt_tokens', 0),
+                              response_tokens=result.get('response_tokens', 0),
+                              cloud_fallback=result.get('cloud_fallback', False))
 
         # Audit log
         prompt_preview = data.get('message', '') or data.get('commands', '') or data.get('description', '') or data.get('code', '') or data.get('playbook', '')
