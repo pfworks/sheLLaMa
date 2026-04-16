@@ -1,5 +1,5 @@
 #!/export/ollama/bin/python3
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 import ollama
 from queue import Queue
 from threading import Thread, Event, Lock
@@ -81,7 +81,7 @@ def worker():
             elif task_type == 'explain_code':
                 result = explain_code(task['code'], model)
             elif task_type == 'chat':
-                result = chat(task['message'], model)
+                result = chat(task['message'], model, messages=task.get('messages'))
             elif task_type == 'analyze':
                 result = analyze_files(task['files'], model)
             elif task_type == 'generate_image':
@@ -402,7 +402,7 @@ def explain_code(code, model='codellama:13b'):
         'total_tokens': response.get('prompt_eval_count', 0) + response.get('eval_count', 0)
     }
 
-def chat(message, model='codellama:13b'):
+def chat(message, model='codellama:13b', messages=None):
     import time
     
     # Check if model exists
@@ -420,9 +420,10 @@ def chat(message, model='codellama:13b'):
     
     start_time = time.time()
     
-    response = ollama.chat(model=model, messages=[
-        {'role': 'user', 'content': message}
-    ])
+    if messages is None:
+        messages = [{'role': 'user', 'content': message}]
+    
+    response = ollama.chat(model=model, messages=messages)
     
     elapsed = time.time() - start_time
     
@@ -779,7 +780,7 @@ def chat_endpoint():
     
     task_id = str(uuid.uuid4())
     event = Event()
-    task = {'id': task_id, 'message': message, 'model': model, 'event': event, 'force_cloud': request.json.get('force_cloud', False), 'type': 'chat',
+    task = {'id': task_id, 'message': message, 'messages': request.json.get('messages'), 'model': model, 'event': event, 'force_cloud': request.json.get('force_cloud', False), 'type': 'chat',
             'client_ip': request.json.get('client_ip', request.remote_addr),
             'client_agent': request.json.get('client_agent', request.headers.get('User-Agent', '')),
             'summary': f'chat: {message[:80].replace(chr(10), " ")}'}

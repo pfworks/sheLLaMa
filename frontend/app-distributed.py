@@ -36,6 +36,10 @@ def _backend_post(url, **kwargs):
 # Persistence file
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), 'shellama-history.json')
 
+# Conversation memory (in-memory, expires after inactivity)
+conversations = {}  # {conv_id: {'messages': [...], 'model': str, 'updated': timestamp}}
+CONV_MAX_AGE = 28800  # 8 hours
+
 # Per-IP token tracking
 ip_token_history = {}  # {ip: [{timestamp, tokens}]}
 ip_token_lock = Lock()
@@ -587,7 +591,46 @@ def explain_code_endpoint():
 def chat_endpoint():
     message = request.json.get('message', '')
     model = request.json.get('model', 'codellama:13b')
-    result, status = proxy_request('/chat', {'message': message, 'model': model}, request.remote_addr, 'chat')
+    conv_id = request.json.get('conversation_id')
+    system_prompt = request.json.get('system_prompt')
+
+    # Expire old conversations
+    now = time.time()
+    expired = [k for k, v in conversations.items() if now - v['updated'] > CONV_MAX_AGE]
+    for k in expired:
+        del conversations[k]
+
+    # Build messages from conversation history
+    messages = None
+    if conv_id:
+        conv = conversations.get(conv_id)
+        if conv:
+            messages = conv['messages'] + [{'role': 'user', 'content': message}]
+        else:
+            messages = []
+            if system_prompt:
+                messages.append({'role': 'system', 'content': system_prompt})
+            messages.append({'role': 'user', 'content': message})
+    elif system_prompt:
+        messages = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': message}]
+
+    payload = {'message': message, 'model': model}
+    if messages:
+        payload['messages'] = messages
+
+    result, status = proxy_request('/chat', payload, request.remote_addr, 'chat')
+
+    # Store conversation if conv_id provided
+    if conv_id and not result.get('error'):
+        if conv_id not in conversations:
+            conversations[conv_id] = {'messages': [], 'model': model, 'updated': now}
+            if system_prompt:
+                conversations[conv_id]['messages'].append({'role': 'system', 'content': system_prompt})
+        conversations[conv_id]['messages'].append({'role': 'user', 'content': message})
+        conversations[conv_id]['messages'].append({'role': 'assistant', 'content': result.get('response', '')})
+        conversations[conv_id]['updated'] = now
+        result['conversation_id'] = conv_id
+
     return jsonify(result), status
 
 @app.route('/analyze', methods=['POST'])
