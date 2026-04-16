@@ -36,6 +36,49 @@ _config = None
 _config_mtime = 0
 _oauth = None
 
+# Rate limiting: {key: [timestamp, timestamp, ...]}
+_rate_requests = {}
+_rate_tokens = {}
+
+
+def _check_rate_limit(key, key_info):
+    """Check rate limits. Returns error string or None."""
+    limits = key_info.get('rate_limit', {})
+    if not limits:
+        return None
+
+    now = time.time()
+
+    # Requests per minute
+    rpm = limits.get('rpm')
+    if rpm:
+        window = [t for t in _rate_requests.get(key, []) if t > now - 60]
+        _rate_requests[key] = window
+        if len(window) >= rpm:
+            return f'Rate limit exceeded: {rpm} requests/minute'
+        window.append(now)
+
+    # Tokens per day
+    tpd = limits.get('tpd')
+    if tpd:
+        day_start = now - 86400
+        day_tokens = sum(t for ts, t in _rate_tokens.get(key, []) if ts > day_start)
+        if day_tokens >= tpd:
+            return f'Rate limit exceeded: {tpd} tokens/day'
+
+    return None
+
+
+def record_rate_tokens(key, tokens):
+    """Record token usage for rate limiting."""
+    if key:
+        if key not in _rate_tokens:
+            _rate_tokens[key] = []
+        _rate_tokens[key].append((time.time(), tokens))
+        # Trim old entries (keep 24h)
+        cutoff = time.time() - 86400
+        _rate_tokens[key] = [(t, n) for t, n in _rate_tokens[key] if t > cutoff]
+
 
 def _load_config():
     """Load auth config, reload if file changed."""
@@ -180,7 +223,13 @@ def require_auth(f):
         if model and not check_model_access(key_info, model):
             return jsonify({'error': f'API key not authorized for model "{model}"'}), 403
 
+        # Rate limiting
+        rate_err = _check_rate_limit(key, key_info)
+        if rate_err:
+            return jsonify({'error': rate_err}), 429
+
         request._shellama_key_info = key_info
+        request._shellama_key = key
         return f(*args, **kwargs)
     return decorated
 

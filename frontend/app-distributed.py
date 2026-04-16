@@ -16,7 +16,7 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'shellama-default-secret-cha
 _proj = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 if _proj not in sys.path:
     sys.path.insert(0, _proj)
-from shared.auth import require_auth, require_admin, get_key_name, auth_enabled, init_sso, get_oauth, sso_enabled, require_sso, get_web_role
+from shared.auth import require_auth, require_admin, get_key_name, auth_enabled, init_sso, get_oauth, sso_enabled, require_sso, get_web_role, record_rate_tokens
 
 # Backend TLS client cert config (for frontend→backend mTLS)
 _backend_cert = os.environ.get('SHELLAMA_BACKEND_CERT')
@@ -327,6 +327,10 @@ def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
                            response_tokens=result.get('response_tokens', 0),
                            cloud_fallback=result.get('cloud_fallback', False),
                            key_name=get_key_name())
+        # Record tokens for rate limiting
+        rate_key = getattr(request, '_shellama_key', None)
+        if rate_key:
+            record_rate_tokens(rate_key, result.get('total_tokens', 0))
         
         return result, 200
     except requests.exceptions.Timeout:

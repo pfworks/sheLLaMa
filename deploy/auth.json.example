@@ -9,7 +9,8 @@
       "name": "user",
       "role": "user",
       "models": ["llama3.2:1b", "llama3.2:3b", "qwen2.5-coder:7b"],
-      "cloud_fallback": true
+      "cloud_fallback": true,
+      "rate_limit": {"rpm": 30, "tpd": 500000}
     },
     "sk-viewer-change-me": {
       "name": "viewer",
