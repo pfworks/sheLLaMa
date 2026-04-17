@@ -44,16 +44,19 @@ except (UnicodeEncodeError, LookupError):
     HAL = ''
 
 # Snapshot bash environment (functions, aliases, variables) once at startup
+# Skip when running non-interactively (called from shellama.bash)
 import tempfile
 _bash_env_file = tempfile.NamedTemporaryFile(mode='w', prefix='shellama_', suffix='.sh', delete=False)
-try:
-    snapshot = subprocess.run(
-        ['bash', '-ic', 'declare -f; alias; declare -x'],
-        capture_output=True, text=True, timeout=5
-    )
-    _bash_env_file.write(snapshot.stdout)
-except Exception:
-    pass
+if len(sys.argv) <= 1:  # interactive mode only
+    try:
+        snapshot = subprocess.run(
+            ['bash', '-ic', 'declare -f; alias; declare -x'],
+            capture_output=True, text=True, timeout=5,
+            env={**os.environ, 'SHELLAMA_NO_SOURCE': '1'}
+        )
+        _bash_env_file.write(snapshot.stdout)
+    except Exception:
+        pass
 _bash_env_file.close()
 BASH_ENV = _bash_env_file.name
 

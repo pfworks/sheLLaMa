@@ -1,5 +1,9 @@
 # sheLLaMa bash integration — source this in your .bashrc
 # Usage: source /path/to/shellama/cli/shellama.bash
+
+# Guard against recursive sourcing (Python CLI snapshots bash env via bash -ic)
+[ -n "$SHELLAMA_NO_SOURCE" ] && return 2>/dev/null
+
 #
 # Gives you the , command in your real bash session:
 #   , <prompt>          agentic chat (AI runs commands)
