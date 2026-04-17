@@ -422,71 +422,94 @@ def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
     if client_ip:
         data['client_ip'] = client_ip
     
-    try:
-        session = requests.Session()
-        session.headers.update({'Connection': 'keep-alive'})
-        if BACKEND_TLS:
-            session.cert = BACKEND_TLS
-            session.verify = BACKEND_VERIFY
+    max_retries = 2
+    tried = set()
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        if not backend:
+            break
+        tried.add(backend)
+
+        try:
+            session = requests.Session()
+            session.headers.update({'Connection': 'keep-alive'})
+            if BACKEND_TLS:
+                session.cert = BACKEND_TLS
+                session.verify = BACKEND_VERIFY
+            
+            response = session.post(
+                f"{backend}{endpoint}", 
+                json=data, 
+                timeout=3600,
+                stream=False
+            )
+            result = response.json()
+            
+            # Check if result was lost — retry on different backend
+            if result.get('error') and 'result was lost' in result.get('error', ''):
+                last_error = f"Backend {backend} lost task result"
+                release_backend(backend)
+                backend = get_available_backend(model, task_type=task_type)
+                continue
+            
+            # Auto-fallback: if backend suggests fallback and auto mode is on, retry with force_cloud
+            if result.get('fallback_available') and persisted_totals.get('auto_fallback', False):
+                data['force_cloud'] = True
+                release_backend(backend)
+                backend2 = get_available_backend(model, task_type=task_type)
+                if backend2:
+                    resp2 = session.post(f"{backend2}{endpoint}", json=data, timeout=3600, stream=False)
+                    result = resp2.json()
+                    release_backend(backend2)
         
-        response = session.post(
-            f"{backend}{endpoint}", 
-            json=data, 
-            timeout=3600,
-            stream=False
-        )
-        result = response.json()
-        
-        # Check if result was lost
-        if result.get('error') and 'result was lost' in result.get('error', ''):
-            return {'error': f"Backend {backend} lost task result. Task may have completed but response was not stored."}, 500
-        
-        # Auto-fallback: if backend suggests fallback and auto mode is on, retry with force_cloud
-        if result.get('fallback_available') and persisted_totals.get('auto_fallback', False):
-            data['force_cloud'] = True
+            # Record tokens for this client IP
+            if client_ip:
+                record_ip_tokens(client_ip, result.get('total_tokens', 0), task_type,
+                               prompt_tokens=result.get('prompt_tokens', 0),
+                               response_tokens=result.get('response_tokens', 0),
+                               cloud_fallback=result.get('cloud_fallback', False),
+                               key_name=get_key_name())
+            # Record tokens for rate limiting
+            rate_key = getattr(request, '_shellama_key', None)
+            if rate_key:
+                record_rate_tokens(rate_key, result.get('total_tokens', 0),
+                                  prompt_tokens=result.get('prompt_tokens', 0),
+                                  response_tokens=result.get('response_tokens', 0),
+                                  cloud_fallback=result.get('cloud_fallback', False))
+
+            # Audit log
+            prompt_preview = data.get('message', '') or data.get('commands', '') or data.get('description', '') or data.get('code', '') or data.get('playbook', '')
+            _audit(client_ip, get_key_name(), endpoint, data.get('model', ''),
+                   prompt_preview, result.get('total_tokens', 0), result.get('elapsed', 0),
+                   fallback=result.get('cloud_fallback', False))
+            
+            # Store in prompt cache
+            if ck and not result.get('error') and not result.get('cloud_fallback'):
+                if len(_prompt_cache) >= CACHE_MAX:
+                    oldest = min(_prompt_cache, key=lambda k: _prompt_cache[k]['time'])
+                    del _prompt_cache[oldest]
+                _prompt_cache[ck] = {'result': result, 'time': time.time()}
+
+            if attempt > 0:
+                result['retried'] = attempt
             release_backend(backend)
-            backend2 = get_available_backend(model, task_type=task_type)
-            if backend2:
-                resp2 = session.post(f"{backend2}{endpoint}", json=data, timeout=3600, stream=False)
-                result = resp2.json()
-                release_backend(backend2)
-        
-        # Record tokens for this client IP
-        if client_ip:
-            record_ip_tokens(client_ip, result.get('total_tokens', 0), task_type,
-                           prompt_tokens=result.get('prompt_tokens', 0),
-                           response_tokens=result.get('response_tokens', 0),
-                           cloud_fallback=result.get('cloud_fallback', False),
-                           key_name=get_key_name())
-        # Record tokens for rate limiting
-        rate_key = getattr(request, '_shellama_key', None)
-        if rate_key:
-            record_rate_tokens(rate_key, result.get('total_tokens', 0),
-                              prompt_tokens=result.get('prompt_tokens', 0),
-                              response_tokens=result.get('response_tokens', 0),
-                              cloud_fallback=result.get('cloud_fallback', False))
+            return result, 200
 
-        # Audit log
-        prompt_preview = data.get('message', '') or data.get('commands', '') or data.get('description', '') or data.get('code', '') or data.get('playbook', '')
-        _audit(client_ip, get_key_name(), endpoint, data.get('model', ''),
-               prompt_preview, result.get('total_tokens', 0), result.get('elapsed', 0),
-               fallback=result.get('cloud_fallback', False))
-        
-        # Store in prompt cache
-        if ck and not result.get('error') and not result.get('cloud_fallback'):
-            if len(_prompt_cache) >= CACHE_MAX:
-                # Evict oldest
-                oldest = min(_prompt_cache, key=lambda k: _prompt_cache[k]['time'])
-                del _prompt_cache[oldest]
-            _prompt_cache[ck] = {'result': result, 'time': time.time()}
+        except requests.exceptions.Timeout:
+            last_error = f'Backend {backend} timed out'
+            release_backend(backend)
+            _health_failures[backend] = _health_failures.get(backend, 0) + 1
+            backend = get_available_backend(model, task_type=task_type)
+            continue
+        except Exception as e:
+            last_error = f'Backend {backend}: {str(e)}'
+            release_backend(backend)
+            _health_failures[backend] = _health_failures.get(backend, 0) + 1
+            backend = get_available_backend(model, task_type=task_type)
+            continue
 
-        return result, 200
-    except requests.exceptions.Timeout:
-        return {'error': f'Backend {backend} request timed out after 3600 seconds'}, 500
-    except Exception as e:
-        return {'error': f'Backend error: {str(e)}'}, 500
-    finally:
-        release_backend(backend)
+    return {'error': f'All backends failed. Last error: {last_error}'}, 500
 
 def split_and_process(commands, model, chunk_size=10):
     """Split commands into chunks and process in parallel"""
