@@ -282,13 +282,18 @@ def ai_agent(query, quiet=False):
             print(f"{YELLOW}$ {cmd}{RESET}")
             if not quiet:
                 try:
-                    answer = input(f"{GRAY}Run? [Y/n/q] {RESET}").strip().lower()
+                    import termios
+                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                except Exception:
+                    pass
+                try:
+                    answer = input(f"{GRAY}Run? [y/N/q] {RESET}").strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     print()
                     return
                 if answer == 'q':
                     return
-                if answer == 'n':
+                if answer != 'y':
                     cmd_outputs.append(f"$ {cmd}\n(skipped by user)")
                     continue
             output = run_command(cmd)
