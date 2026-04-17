@@ -35,6 +35,7 @@ WEB_PAGES = ['/', '/status', '/backends', '/stats', '/costs']
 _config = None
 _config_mtime = 0
 _oauth = None
+_webhook_callback = None  # set by frontend to fire webhooks
 
 # Rate limiting: {key: [timestamp, timestamp, ...]}
 _rate_requests = {}
@@ -84,6 +85,14 @@ def _check_rate_limit(key, key_info):
         # Budget enforced on actual cloud spend only
         if actual_cost >= max_cost:
             return f'Budget exceeded: ${actual_cost:.4f} actual cloud spend of ${max_cost:.2f}/day limit'
+        # Budget warning at 80%
+        if actual_cost >= max_cost * 0.8 and _webhook_callback:
+            _webhook_callback('budget_warning', {
+                'key_name': key_info.get('name', 'unknown'),
+                'actual_cost': round(actual_cost, 4),
+                'max_daily': max_cost,
+                'percent': round(actual_cost / max_cost * 100, 1),
+            })
 
     return None
 

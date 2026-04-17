@@ -223,6 +223,42 @@ _health_status = {b['url']: 'unknown' for b in BACKENDS}  # healthy/unhealthy/un
 HEALTH_FAIL_THRESHOLD = 3  # mark unhealthy after N consecutive failures
 HEALTH_CHECK_INTERVAL = 30  # seconds
 
+# Webhooks: POST JSON to configured URLs on events
+WEBHOOK_URL = os.environ.get('SHELLAMA_WEBHOOK_URL', '')  # single URL or loaded from config
+_webhook_sent = {}  # {event_key: timestamp} — dedup within 5 min
+
+def _fire_webhook(event, details):
+    """Send webhook notification. Deduplicates within 5 minutes."""
+    urls = []
+    if WEBHOOK_URL:
+        urls.append(WEBHOOK_URL)
+    # Also check persisted config
+    for u in persisted_totals.get('webhook_urls', []):
+        if u not in urls:
+            urls.append(u)
+    if not urls:
+        return
+    # Dedup
+    key = f"{event}:{details.get('url', details.get('key_name', ''))}"
+    now = time.time()
+    if key in _webhook_sent and now - _webhook_sent[key] < 300:
+        return
+    _webhook_sent[key] = now
+    # Clean old entries
+    _webhook_sent.update({k: v for k, v in _webhook_sent.items() if now - v < 300})
+
+    payload = {
+        'event': event,
+        'timestamp': now,
+        'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        **details,
+    }
+    for url in urls:
+        try:
+            requests.post(url, json=payload, timeout=5)
+        except:
+            pass
+
 def _health_check_loop():
     """Background thread: ping backends periodically."""
     while True:
@@ -232,14 +268,18 @@ def _health_check_loop():
             try:
                 resp = _backend_get(f"{url}/queue-status", timeout=5)
                 if resp.status_code == 200:
+                    was_unhealthy = _health_status.get(url) == 'unhealthy'
                     _health_failures[url] = 0
                     _health_status[url] = 'healthy'
+                    if was_unhealthy:
+                        _fire_webhook('backend_recovered', {'url': url})
                     continue
             except:
                 pass
             _health_failures[url] = _health_failures.get(url, 0) + 1
             if _health_failures[url] >= HEALTH_FAIL_THRESHOLD:
                 _health_status[url] = 'unhealthy'
+                _fire_webhook('backend_down', {'url': url, 'failures': _health_failures[url]})
 
 Thread(target=_health_check_loop, daemon=True).start()
 
@@ -1223,6 +1263,32 @@ def api_audit_toggle():
     save_history()
     return jsonify({'audit_enabled': bool(enabled)})
 
+@app.route('/api/webhooks', methods=['GET', 'POST'])
+@require_admin
+def api_webhooks():
+    """Get or set webhook URLs."""
+    if request.method == 'POST':
+        data = request.json or {}
+        with ip_token_lock:
+            if 'urls' in data:
+                persisted_totals['webhook_urls'] = data['urls']
+            elif 'add' in data:
+                urls = persisted_totals.get('webhook_urls', [])
+                if data['add'] not in urls:
+                    urls.append(data['add'])
+                persisted_totals['webhook_urls'] = urls
+            elif 'remove' in data:
+                urls = persisted_totals.get('webhook_urls', [])
+                urls = [u for u in urls if u != data['remove']]
+                persisted_totals['webhook_urls'] = urls
+        save_history()
+        return jsonify({'webhook_urls': persisted_totals.get('webhook_urls', [])})
+    return jsonify({
+        'webhook_urls': persisted_totals.get('webhook_urls', []),
+        'env_url': WEBHOOK_URL or None,
+        'events': ['backend_down', 'backend_recovered', 'budget_warning'],
+    })
+
 @app.route('/api/audit/status')
 def api_audit_status():
     """Check if audit logging is enabled."""
@@ -1497,6 +1563,10 @@ def sso_userinfo():
 
 # Initialize SSO (overrides secret_key if SSO configured)
 init_sso(app)
+
+# Register webhook callback for auth module
+import shared.auth as _auth_mod
+_auth_mod._webhook_callback = _fire_webhook
 
 if __name__ == '__main__':
     ssl_ctx = None
