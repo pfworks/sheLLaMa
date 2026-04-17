@@ -217,6 +217,32 @@ MODEL_SIZES = {
 backend_status = {b['url']: {'available': True, 'queue_size': 0, 'weight': b['weight'], 'max_model': b['max_model'], 'tasks': b.get('tasks', ['all'])} for b in BACKENDS}
 backend_lock = Lock()
 
+# Health check tracking
+_health_failures = {b['url']: 0 for b in BACKENDS}  # consecutive failures
+_health_status = {b['url']: 'unknown' for b in BACKENDS}  # healthy/unhealthy/unknown
+HEALTH_FAIL_THRESHOLD = 3  # mark unhealthy after N consecutive failures
+HEALTH_CHECK_INTERVAL = 30  # seconds
+
+def _health_check_loop():
+    """Background thread: ping backends periodically."""
+    while True:
+        time.sleep(HEALTH_CHECK_INTERVAL)
+        for backend in BACKENDS:
+            url = backend['url']
+            try:
+                resp = _backend_get(f"{url}/queue-status", timeout=5)
+                if resp.status_code == 200:
+                    _health_failures[url] = 0
+                    _health_status[url] = 'healthy'
+                    continue
+            except:
+                pass
+            _health_failures[url] = _health_failures.get(url, 0) + 1
+            if _health_failures[url] >= HEALTH_FAIL_THRESHOLD:
+                _health_status[url] = 'unhealthy'
+
+Thread(target=_health_check_loop, daemon=True).start()
+
 def get_backend_queue_size(url):
     """Check backend queue size and capacity stats"""
     try:
@@ -265,6 +291,9 @@ def get_available_backend(requested_model='codellama:13b', wait=True, timeout=30
             available = []
             for url in backend_status.keys():
                 if backend_status[url]['available']:
+                    # Skip unhealthy backends
+                    if _health_status.get(url) == 'unhealthy':
+                        continue
                     # Check task assignment
                     tasks = backend_status[url].get('tasks', ['all'])
                     if 'all' not in tasks and task_type not in tasks:
@@ -552,6 +581,7 @@ def queue_status():
                 'queue_size': queue_size,
                 'active': is_active,
                 'status': 'online',
+                'health': _health_status.get(url, 'unknown'),
                 'active_model': data.get('active_model', 'none'),
                 'active_type': data.get('active_type', ''),
                 'active_client': data.get('active_client', ''),
@@ -574,6 +604,7 @@ def queue_status():
                 'queue_size': 0,
                 'active': False,
                 'status': 'offline',
+                'health': 'unhealthy',
                 'active_model': 'none',
                 'backend_tokens': 0,
                 'backend_requests': 0,
