@@ -611,6 +611,11 @@ def stats_page():
 def costs_page():
     return send_from_directory('/export/html', 'costs.html')
 
+@app.route('/settings')
+@require_sso
+def settings_page():
+    return send_from_directory('/export/html', 'settings.html')
+
 @app.route('/queue-status')
 def queue_status():
     """Aggregate queue status from all backends"""

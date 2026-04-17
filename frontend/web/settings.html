@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sheLLaMa - Settings</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #1e1e1e; color: #00ff00; padding: 20px; margin: 0; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; border-bottom: 2px solid #00ff00; padding-bottom: 10px; }
+        .nav { text-align: center; margin: 20px 0; }
+        .nav a { color: #00ff00; border: 2px solid #00ff00; padding: 10px 24px; margin: 0 5px; text-decoration: none; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 16px; }
+        .nav a.active { background: #00ff00; color: #000; }
+        .nav a:hover { background: #00ff0033; }
+        a { color: #00ff00; }
+        .section { background: #2b2b2b; border: 2px solid #00ff00; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        .section-title { font-size: 16px; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 8px; }
+        .btn { background: #2b2b2b; color: #00ff00; border: 1px solid #00ff00; padding: 6px 16px; cursor: pointer; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; margin: 2px; }
+        .btn:hover { background: #00ff0033; }
+        .btn.danger { border-color: #ff4444; color: #ff4444; }
+        .btn.danger:hover { background: #ff444433; }
+        input { background: #1e1e1e; color: #00ff00; border: 1px solid #00ff00; padding: 6px 10px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 13px; width: 300px; }
+        .toggle { cursor: pointer; font-size: 14px; padding: 6px 16px; border-radius: 3px; border: 1px solid; font-family: 'Courier New', monospace; }
+        .toggle.on { background: #ff880033; border-color: #ff8800; color: #ff8800; }
+        .toggle.off { background: #2b2b2b; border-color: #555; color: #555; }
+        .item { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #333; }
+        .item:last-child { border-bottom: none; }
+        .msg { padding: 8px; margin: 8px 0; border-radius: 3px; display: none; }
+        .msg.ok { background: #00ff0022; border: 1px solid #00ff00; display: block; }
+        .msg.err { background: #ff444422; border: 1px solid #ff4444; color: #ff4444; display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>sheLLaMa - Settings</h1>
+        <div class="nav">
+            <a href="/status">Overview</a>
+            <a href="/backends">Backends</a>
+            <a href="/stats">Stats</a>
+            <a href="/costs">Costs</a>
+        </div>
+        <div id="msg" class="msg"></div>
+
+        <!-- Model Aliases -->
+        <div class="section">
+            <div class="section-title">Model Aliases</div>
+            <div id="aliases-list"></div>
+            <div style="margin-top:10px">
+                <input id="alias-name" placeholder="Alias (e.g. fast)">
+                <input id="alias-model" placeholder="Model (e.g. llama3.2:1b)">
+                <button class="btn" onclick="addAlias()">Add</button>
+            </div>
+        </div>
+
+        <!-- Toggles -->
+        <div class="section">
+            <div class="section-title">Feature Toggles</div>
+            <div class="item">
+                <span>Auto Cloud Fallback</span>
+                <span id="fallback-toggle" class="toggle off" onclick="toggleSetting('auto-fallback','fallback-toggle','auto_fallback')">OFF</span>
+            </div>
+            <div class="item">
+                <span>Audit Logging</span>
+                <span id="audit-toggle" class="toggle off" onclick="toggleAudit()">OFF</span>
+            </div>
+        </div>
+
+        <!-- Webhooks -->
+        <div class="section">
+            <div class="section-title">Webhook URLs</div>
+            <div style="opacity:0.7;font-size:12px;margin-bottom:10px">Events: backend_down, backend_recovered, budget_warning</div>
+            <div id="webhooks-list"></div>
+            <div style="margin-top:10px">
+                <input id="webhook-url" placeholder="https://hooks.example.com/shellama" style="width:400px">
+                <button class="btn" onclick="addWebhook()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showMsg(text, ok) {
+            const el = document.getElementById('msg');
+            el.textContent = text; el.className = 'msg ' + (ok ? 'ok' : 'err');
+            setTimeout(() => el.className = 'msg', 3000);
+        }
+
+        // Model Aliases
+        function loadAliases() {
+            fetch('/api/model-aliases').then(r=>r.json()).then(d => {
+                const el = document.getElementById('aliases-list');
+                const aliases = d.model_aliases || {};
+                el.innerHTML = Object.keys(aliases).length === 0 ? '<div style="opacity:0.5">No aliases configured</div>' : '';
+                Object.entries(aliases).forEach(([k,v]) => {
+                    el.innerHTML += `<div class="item"><span>${k} → ${v}</span><button class="btn danger" onclick="delAlias('${k}')">✕</button></div>`;
+                });
+            });
+        }
+        function addAlias() {
+            const alias = document.getElementById('alias-name').value.trim();
+            const model = document.getElementById('alias-model').value.trim();
+            if (!alias || !model) return showMsg('Both fields required', false);
+            fetch('/api/model-aliases', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({set: {alias, model}})
+            }).then(r=>r.json()).then(d => {
+                if (d.error) showMsg(d.error, false); else { showMsg(`Alias ${alias} → ${model}`, true); loadAliases(); }
+                document.getElementById('alias-name').value = '';
+                document.getElementById('alias-model').value = '';
+            });
+        }
+        function delAlias(name) {
+            fetch('/api/model-aliases', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({delete: name})
+            }).then(() => { showMsg('Deleted ' + name, true); loadAliases(); });
+        }
+
+        // Toggles
+        function loadToggles() {
+            fetch('/queue-status').then(r=>r.json()).then(d => {
+                setToggle('fallback-toggle', d.auto_fallback);
+            });
+            fetch('/api/audit/status').then(r=>r.json()).then(d => {
+                setToggle('audit-toggle', d.audit_enabled);
+            });
+        }
+        function setToggle(id, on) {
+            const el = document.getElementById(id);
+            el.textContent = on ? 'ON' : 'OFF';
+            el.className = 'toggle ' + (on ? 'on' : 'off');
+        }
+        function toggleSetting(endpoint, toggleId, field) {
+            const isOn = document.getElementById(toggleId).textContent === 'ON';
+            fetch('/' + endpoint, {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({enabled: !isOn})
+            }).then(() => { setToggle(toggleId, !isOn); showMsg(field + ': ' + (!isOn ? 'ON' : 'OFF'), true); });
+        }
+        function toggleAudit() {
+            const isOn = document.getElementById('audit-toggle').textContent === 'ON';
+            fetch('/api/audit/toggle', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({enabled: !isOn})
+            }).then(r=>r.json()).then(d => {
+                if (d.error) showMsg(d.error, false);
+                else { setToggle('audit-toggle', !isOn); showMsg('Audit: ' + (!isOn ? 'ON' : 'OFF'), true); }
+            });
+        }
+
+        // Webhooks
+        function loadWebhooks() {
+            fetch('/api/webhooks').then(r=>r.json()).then(d => {
+                const el = document.getElementById('webhooks-list');
+                const urls = d.webhook_urls || [];
+                el.innerHTML = urls.length === 0 ? '<div style="opacity:0.5">No webhooks configured</div>' : '';
+                urls.forEach(u => {
+                    el.innerHTML += `<div class="item"><span>${u}</span><button class="btn danger" onclick="delWebhook('${u}')">✕</button></div>`;
+                });
+                if (d.env_url) el.innerHTML += `<div class="item" style="opacity:0.5"><span>${d.env_url} (from env)</span></div>`;
+            });
+        }
+        function addWebhook() {
+            const url = document.getElementById('webhook-url').value.trim();
+            if (!url) return;
+            fetch('/api/webhooks', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({add: url})
+            }).then(() => { showMsg('Added webhook', true); loadWebhooks(); document.getElementById('webhook-url').value = ''; });
+        }
+        function delWebhook(url) {
+            fetch('/api/webhooks', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({remove: url})
+            }).then(() => { showMsg('Removed webhook', true); loadWebhooks(); });
+        }
+
+        loadAliases(); loadToggles(); loadWebhooks();
+    </script>
+    <script>
+    function initAuth() {
+        fetch("/sso/userinfo").then(r=>r.json()).then(d=>{
+            const role = d.role || "admin";
+            if (role !== "admin") {
+                document.querySelectorAll(".admin-only").forEach(el => el.style.display = "none");
+                document.querySelectorAll(".section").forEach(el => {
+                    el.innerHTML = '<div style="opacity:0.5;text-align:center;padding:20px">Admin access required to modify settings</div>';
+                });
+            }
+            const nav = document.querySelector(".nav");
+            if (d.authenticated) {
+                nav.insertAdjacentHTML("beforeend", ' <a href="/sso/logout" style="border-color:#ff8800;color:#ff8800">' + (d.user.name || d.user.email || "logout") + ' ↗</a>');
+            } else if (d.role === "none") {
+                nav.insertAdjacentHTML("beforeend", ' <a href="/sso/login" style="border-color:#ff8800;color:#ff8800">Login</a>');
+            }
+        }).catch(()=>{});
+    }
+    initAuth();
+    </script>
+</body>
+</html>
