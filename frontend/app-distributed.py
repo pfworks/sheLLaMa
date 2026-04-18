@@ -420,9 +420,14 @@ def _audit(client_ip, key_name, endpoint, model, prompt_preview, tokens, elapsed
 def _cache_key(endpoint, data):
     """Generate cache key from endpoint + model + content."""
     import hashlib
-    # Only cache deterministic requests — skip if conversation_id present
-    if data.get('conversation_id') or data.get('messages') or data.get('force_cloud'):
+    if data.get('force_cloud'):
         return None
+    # Skip caching for actual multi-turn conversations (more than 1 user message)
+    messages = data.get('messages')
+    if messages:
+        user_msgs = [m for m in messages if m.get('role') == 'user']
+        if len(user_msgs) > 1:
+            return None
     content = data.get('message', '') or data.get('commands', '') or data.get('description', '') or data.get('code', '') or data.get('playbook', '')
     if not content:
         return None
