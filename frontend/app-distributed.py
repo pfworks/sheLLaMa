@@ -192,9 +192,49 @@ def save_backends():
 BACKENDS = load_backends()
 MODEL_ALIASES = load_model_aliases()
 
-def resolve_model(model):
-    """Resolve model alias to actual model name."""
+def resolve_model(model, prompt=''):
+    """Resolve model alias to actual model name. 'auto' routes based on prompt."""
+    if model == 'auto' and prompt:
+        return _auto_route(prompt)
     return MODEL_ALIASES.get(model, model)
+
+
+# Auto-routing config — configurable via backends.json "auto_routing"
+AUTO_ROUTING = {
+    'code_model': 'qwen2.5-coder:7b',
+    'fast_model': 'llama3.2:1b',
+    'default_model': 'llama3.2:3b',
+    'code_keywords': ['code', 'function', 'debug', 'script', 'python', 'java', 'rust',
+                      'javascript', 'typescript', 'golang', 'sql', 'html', 'css', 'api',
+                      'class', 'import', 'def ', 'async', 'compile', 'error', 'bug',
+                      'refactor', 'optimize', 'algorithm', 'regex', 'parse'],
+    'long_threshold': 100,  # words — use default_model above this
+}
+
+def _load_auto_routing():
+    config_file = os.path.join(os.path.dirname(__file__), 'backends.json')
+    try:
+        with open(config_file, 'r') as f:
+            cfg = json.load(f).get('auto_routing', {})
+            AUTO_ROUTING.update(cfg)
+    except:
+        pass
+
+_load_auto_routing()
+
+
+def _auto_route(prompt):
+    """Pick model based on prompt content and length."""
+    lower = prompt.lower()
+    # Code-related → coding model
+    if any(kw in lower for kw in AUTO_ROUTING['code_keywords']):
+        return AUTO_ROUTING['code_model']
+    # Short prompt → fast model
+    word_count = len(prompt.split())
+    if word_count < AUTO_ROUTING['long_threshold']:
+        return AUTO_ROUTING['fast_model']
+    # Long/complex → default model
+    return AUTO_ROUTING['default_model']
 
 # Model size ordering for comparison
 MODEL_SIZES = {
@@ -437,7 +477,8 @@ def _cache_key(endpoint, data):
 
 def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
     """Send request to available backend with keepalive"""
-    model = resolve_model(data.get('model', 'codellama:13b'))
+    prompt_text = data.get('message', '') or data.get('commands', '') or data.get('description', '') or data.get('code', '') or data.get('playbook', '')
+    model = resolve_model(data.get('model', 'codellama:13b'), prompt_text)
     data['model'] = model  # pass resolved name to backend
 
     # Check prompt cache
@@ -810,7 +851,7 @@ def explain_code_endpoint():
 @require_auth
 def chat_endpoint():
     message = request.json.get('message', '')
-    model = resolve_model(request.json.get('model', 'codellama:13b'))
+    model = resolve_model(request.json.get('model', 'codellama:13b'), message)
     conv_id = request.json.get('conversation_id')
     system_prompt = request.json.get('system_prompt')
 
@@ -1480,7 +1521,6 @@ def v1_chat_completions():
     """OpenAI-compatible chat completions endpoint."""
     data = request.json or {}
     messages = data.get('messages', [])
-    model = resolve_model(data.get('model', 'default'))
 
     # Extract the last user message for our /chat endpoint
     message = ''
@@ -1488,6 +1528,8 @@ def v1_chat_completions():
         if m.get('role') == 'user':
             message = m.get('content', '')
             break
+
+    model = resolve_model(data.get('model', 'default'), message)
 
     if not message:
         return jsonify({'error': {'message': 'No user message found', 'type': 'invalid_request_error'}}), 400
