@@ -820,7 +820,15 @@ if __name__ == '__main__':
         elif cmd == 'models':
             select_model()
         elif cmd == 'tokens':
-            print(f"{CYAN}Session usage: {session_requests} requests | {session_tokens} tokens | {session_elapsed:.1f}s{RESET}")
+            try:
+                r = _session.get(f"{API_URL}/cloud-costs", timeout=5).json()
+                total = r.get('total_tokens', 0)
+                prompt = r.get('prompt_tokens', 0)
+                resp = r.get('response_tokens', 0)
+                cached = r.get('cached', {}).get('requests', 0)
+                print(f"{CYAN}Total usage: {total:,} tokens ({prompt:,} prompt + {resp:,} response) | {cached} cached{RESET}")
+            except:
+                print(f"{CYAN}Session usage: {session_requests} requests | {session_tokens} tokens | {session_elapsed:.1f}s{RESET}")
         elif cmd in ('list', 'help'):
             show_services()
         else:
