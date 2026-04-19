@@ -384,7 +384,7 @@ def ai_image(prompt):
     """Generate an image from a text prompt."""
     global session_requests, session_elapsed
     import base64
-    image_model = os.environ.get('AI_IMAGE_MODEL', 'sd-turbo')
+    image_model = os.environ.get('AI_IMAGE_MODEL', 'sdxl-turbo')
     steps = 4 if 'turbo' in image_model else 20
     try:
         spinner.start()

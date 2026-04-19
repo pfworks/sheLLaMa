@@ -153,7 +153,7 @@ function ,analyze {
 
 function ,img {
     $prompt = $args -join ' '
-    $im = if ($env:AI_IMAGE_MODEL) { $env:AI_IMAGE_MODEL } else { "sd-turbo" }
+    $im = if ($env:AI_IMAGE_MODEL) { $env:AI_IMAGE_MODEL } else { "sdxl-turbo" }
     $st = if ($im -match "turbo") { 4 } else { 20 }
     $body = @{ prompt = $prompt; image_model = $im; steps = $st; width = 512; height = 512 } | ConvertTo-Json
     try {

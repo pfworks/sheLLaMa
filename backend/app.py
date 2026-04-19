@@ -435,7 +435,11 @@ def chat(message, model='codellama:13b', messages=None):
         'total_tokens': response.get('prompt_eval_count', 0) + response.get('eval_count', 0)
     }
 
-def generate_image(prompt, model='stable-diffusion-v1-5', steps=20, width=512, height=512):
+_image_pipe = None  # cached pipeline
+_image_pipe_model = None  # which model is loaded
+
+def generate_image(prompt, model='sd-turbo', steps=20, width=512, height=512):
+    global _image_pipe, _image_pipe_model
     import time
     import base64
     import io
@@ -458,17 +462,25 @@ def generate_image(prompt, model='stable-diffusion-v1-5', steps=20, width=512, h
         import torch
         from diffusers import AutoPipelineForText2Image
         
-        pipe = AutoPipelineForText2Image.from_pretrained(
-            hf_model,
-            torch_dtype=torch.float32,
-        )
-        pipe.to("cpu")
+        # Use bfloat16 on CPU for speed, float16 on CUDA
+        has_cuda = torch.cuda.is_available()
+        dtype = torch.float16 if has_cuda else (torch.bfloat16 if hasattr(torch, 'bfloat16') else torch.float32)
+        device = "cuda" if has_cuda else "cpu"
+        
+        # Cache pipeline — only reload if model changed
+        if _image_pipe is None or _image_pipe_model != hf_model:
+            _image_pipe = AutoPipelineForText2Image.from_pretrained(
+                hf_model,
+                torch_dtype=dtype,
+            )
+            _image_pipe.to(device)
+            _image_pipe_model = hf_model
         
         # Turbo models use fewer steps
         if 'turbo' in hf_model:
             steps = min(steps, 4)
         
-        result = pipe(
+        result = _image_pipe(
             prompt,
             num_inference_steps=steps,
             width=width,

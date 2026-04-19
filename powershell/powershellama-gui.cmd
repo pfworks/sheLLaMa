@@ -315,7 +315,7 @@ function Process-Input {
                 elseif ($resp.analysis) { Write-Terminal $resp.analysis ([System.Drawing.Color]::Cyan) }
             }
             elseif ($query.StartsWith('img ')) {
-                $im = if ($env:AI_IMAGE_MODEL) { $env:AI_IMAGE_MODEL } else { "sd-turbo" }
+                $im = if ($env:AI_IMAGE_MODEL) { $env:AI_IMAGE_MODEL } else { "sdxl-turbo" }
                 $st = if ($im -match "turbo") { 4 } else { 20 }
                 $resp = Invoke-ShellamaAPI "/generate-image" @{ prompt = $query.Substring(4).Trim(); image_model = $im; steps = $st; width = 512; height = 512 }
                 if ($resp.image) {

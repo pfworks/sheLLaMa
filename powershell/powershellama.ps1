@@ -205,7 +205,7 @@ function Invoke-AIAgent {
 
 function Invoke-AIImage {
     param([string]$Prompt)
-    $imageModel = if ($env:AI_IMAGE_MODEL) { $env:AI_IMAGE_MODEL } else { "sd-turbo" }
+    $imageModel = if ($env:AI_IMAGE_MODEL) { $env:AI_IMAGE_MODEL } else { "sdxl-turbo" }
     $steps = if ($imageModel -match "turbo") { 4 } else { 20 }
     try {
         Start-LlamaSpinner
