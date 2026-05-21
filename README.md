@@ -281,6 +281,7 @@ curl http://server:5000/queue-status
 | `/image-models` | GET | List image generation models |
 | `/test` | POST | Benchmark models: `{"model": "all\|name", "prompt": "..."}` |
 | `/cloud-costs` | GET | Running tab: what total usage would cost on cloud providers |
+| `/enterprise-costs` | GET | Enterprise subscription comparison: `?users=N&days=N` |
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Cumulative usage by client IP and by task type |
@@ -445,6 +446,8 @@ sheLLaMa doubles as a **cloud AI cost estimation platform**. Every token consume
 4. Time-range filtering (day/week/month/year/custom) enables trend analysis and budget forecasting
 
 **Supported providers:** Claude (Opus 4, Sonnet 4, 3.5), GPT-4o/mini, OpenAI o3/o4-mini, Gemini 2.5 Pro/Flash, Grok 3/mini, Llama 3.1 70B, Amazon Nova (Pro/Lite/Micro/Premier), Bedrock Llama 4, DeepSeek R1, Mistral Large 3.
+
+**Enterprise subscriptions (seat-based comparison):** Microsoft Copilot, ChatGPT Team/Enterprise, Claude Team/Enterprise, Google Gemini Business/Enterprise, Grok (X Premium+), Amazon Q Developer Pro, Amazon Q Business Pro.
 
 **Use cases:**
 - Pre-migration planning: run your team's workload locally for 1–4 weeks, then see projected cloud spend

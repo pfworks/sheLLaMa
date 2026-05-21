@@ -23,8 +23,10 @@
         .cheapest td { color: #44ff44; }
         .costliest td { color: #ff4444; }
         .bedrock td:first-child { color: #ff9900; }
+        .enterprise td:first-child { color: #00bfff; }
         .cost-table tr.section-divider td { border-top: 2px solid #444; padding-top: 10px; }
         .section-label { color: #ff9900; font-size: 12px; opacity: 0.7; padding: 8px 12px 2px; }
+        .section-label.enterprise-label { color: #00bfff; }
         .range-btn { background: #2b2b2b; color: #00ff00; border: 2px solid #00ff00; padding: 8px 16px; margin: 0 3px; cursor: pointer; border-radius: 3px; font-family: 'Courier New', monospace; }
         .range-btn.active { background: #00ff00; color: #000; }
         .range-selector { text-align: center; margin: 15px 0; }
@@ -81,6 +83,22 @@
             <table class="cost-table">
                 <thead><tr><th>Provider</th><th style="text-align:right">Input</th><th style="text-align:right">Output</th><th style="text-align:right">Total</th></tr></thead>
                 <tbody id="fb-table"></tbody>
+            </table>
+        </div>
+
+        <div class="summary" id="ent-section">
+            <div class="section-header">
+                <div class="section-title" style="color:#00bfff">Enterprise Subscription Comparison</div>
+                <div>
+                    <label style="font-size:12px;opacity:0.7">Users:</label>
+                    <input type="number" id="ent-users" value="1" min="1" max="10000" style="width:60px;background:#1e1e1e;color:#00ff00;border:1px solid #00ff00;padding:4px;border-radius:3px;font-family:'Courier New',monospace;">
+                    <button class="btn" onclick="loadEnterprise()">Update</button>
+                </div>
+            </div>
+            <div style="margin:8px 0; opacity:0.7; font-size:13px;">Monthly subscription costs vs equivalent per-token API spend for your usage</div>
+            <table class="cost-table">
+                <thead><tr><th>Service</th><th style="text-align:right">$/seat/mo</th><th style="text-align:right">Seats × Cost</th><th style="text-align:right">API Equivalent</th><th style="text-align:right">Savings vs Sub</th></tr></thead>
+                <tbody id="ent-table"></tbody>
             </table>
         </div>
     </div>
@@ -185,6 +203,24 @@
 
         loadCosts();
         setInterval(loadCosts, 10000);
+
+        function loadEnterprise() {
+            const users = document.getElementById('ent-users').value || 1;
+            const days = currentRange === 'day' ? 1 : currentRange === 'week' ? 7 : currentRange === 'month' ? 30 : currentRange === 'year' ? 365 : 30;
+            fetch(`/enterprise-costs?users=${users}&days=${days}`).then(r => r.json()).then(data => {
+                const tbody = document.getElementById('ent-table');
+                tbody.innerHTML = '';
+                (data.enterprise_costs || []).forEach(e => {
+                    const tr = document.createElement('tr');
+                    tr.classList.add('enterprise');
+                    const savings = e.savings_vs_subscription !== null ? `$${e.savings_vs_subscription.toFixed(2)}` : '—';
+                    const savingsColor = e.savings_vs_subscription > 0 ? '#44ff44' : '#ff4444';
+                    tr.innerHTML = `<td title="${e.description}">${e.provider}</td><td class="num">$${e.monthly_per_seat.toFixed(2)}</td><td class="num">$${e.monthly_total.toFixed(2)}</td><td class="num">$${e.equivalent_token_cost.toFixed(4)}</td><td class="num" style="color:${savingsColor}">${savings}</td>`;
+                    tbody.appendChild(tr);
+                });
+            }).catch(() => {});
+        }
+        loadEnterprise();
     </script>
 <script>
 function initAuth() {

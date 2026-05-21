@@ -1198,6 +1198,31 @@ def cloud_costs_tab():
         },
     })
 
+@app.route('/enterprise-costs')
+def enterprise_costs_tab():
+    """Enterprise subscription cost comparison based on actual usage."""
+    _proj = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+    if _proj not in sys.path:
+        sys.path.insert(0, _proj)
+    from shared.constants import enterprise_cost_estimates
+
+    num_users = int(request.args.get('users', 1))
+    days = int(request.args.get('days', 30))
+
+    with ip_token_lock:
+        p_tok = persisted_totals.get('prompt_tokens', 0)
+        r_tok = persisted_totals.get('response_tokens', 0)
+
+    estimates = enterprise_cost_estimates(p_tok, r_tok, days=days, num_users=num_users)
+    return jsonify({
+        'prompt_tokens': p_tok,
+        'response_tokens': r_tok,
+        'total_tokens': p_tok + r_tok,
+        'days_tracked': days,
+        'num_users': num_users,
+        'enterprise_costs': estimates,
+    })
+
 @app.route('/reset-stats', methods=['POST'])
 @require_admin
 def reset_stats():

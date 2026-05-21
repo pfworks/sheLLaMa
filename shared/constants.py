@@ -72,6 +72,73 @@ CLOUD_PRICING_STATIC = {
     'Amazon Nova Micro':  {'input': 0.04,  'output': 0.14},
 }
 
+# Enterprise/subscription AI services (per seat/month pricing)
+# These are flat-rate subscriptions, not per-token — we compare by showing
+# what the equivalent per-token cost would be at your usage level, and
+# what the monthly seat cost would be for your team size.
+ENTERPRISE_PRICING = {
+    'Microsoft Copilot': {
+        'monthly_per_seat': 30.00,
+        'description': 'M365 Copilot (GPT-4o)',
+        'underlying_model': 'GPT-4o',
+        'url': 'https://www.microsoft.com/en-us/microsoft-365/copilot',
+    },
+    'ChatGPT Team': {
+        'monthly_per_seat': 30.00,
+        'description': 'ChatGPT Team (GPT-4o, o3)',
+        'underlying_model': 'GPT-4o',
+        'url': 'https://openai.com/chatgpt/team/',
+    },
+    'ChatGPT Enterprise': {
+        'monthly_per_seat': 60.00,
+        'description': 'ChatGPT Enterprise (unlimited GPT-4o, o3, admin)',
+        'underlying_model': 'GPT-4o',
+        'url': 'https://openai.com/chatgpt/enterprise/',
+    },
+    'Claude Team': {
+        'monthly_per_seat': 30.00,
+        'description': 'Claude Team (Sonnet 4, Opus 4)',
+        'underlying_model': 'Claude 4 Sonnet',
+        'url': 'https://www.anthropic.com/claude/team',
+    },
+    'Claude Enterprise': {
+        'monthly_per_seat': 60.00,
+        'description': 'Claude Enterprise (higher limits, SSO, admin)',
+        'underlying_model': 'Claude 4 Sonnet',
+        'url': 'https://www.anthropic.com/claude/enterprise',
+    },
+    'Google Gemini Business': {
+        'monthly_per_seat': 24.00,
+        'description': 'Gemini for Workspace (Gemini 2.5)',
+        'underlying_model': 'Gemini 2.5 Pro',
+        'url': 'https://workspace.google.com/products/gemini/',
+    },
+    'Google Gemini Enterprise': {
+        'monthly_per_seat': 36.00,
+        'description': 'Gemini Enterprise (unlimited, NotebookLM)',
+        'underlying_model': 'Gemini 2.5 Pro',
+        'url': 'https://workspace.google.com/products/gemini/',
+    },
+    'Grok (X Premium+)': {
+        'monthly_per_seat': 40.00,
+        'description': 'X Premium+ (Grok 3, image gen)',
+        'underlying_model': 'Grok 3',
+        'url': 'https://x.com/premium',
+    },
+    'Amazon Q Developer Pro': {
+        'monthly_per_seat': 19.00,
+        'description': 'Amazon Q Developer Pro (code, agents)',
+        'underlying_model': 'Bedrock Claude 4 Sonnet',
+        'url': 'https://aws.amazon.com/q/developer/',
+    },
+    'Amazon Q Business Pro': {
+        'monthly_per_seat': 20.00,
+        'description': 'Amazon Q Business Pro (enterprise search, chat)',
+        'underlying_model': 'Bedrock Nova Pro',
+        'url': 'https://aws.amazon.com/q/business/',
+    },
+}
+
 # Cache for live pricing
 _cached_pricing = None
 _cached_pricing_source = None
@@ -216,3 +283,42 @@ def cloud_cost_estimates(prompt_tokens, response_tokens):
             'total_cost': round(ci + co, 8),
         })
     return costs, source
+
+
+def enterprise_cost_estimates(prompt_tokens, response_tokens, days=30, num_users=1):
+    """Calculate enterprise subscription cost comparison.
+
+    Shows monthly seat cost vs equivalent per-token spend for the same usage.
+    days: number of days the token counts span (for monthly projection).
+    num_users: number of seats to price.
+    """
+    pricing, _ = get_cloud_pricing()
+    bedrock = get_bedrock_pricing()
+    all_pricing = {}
+    all_pricing.update(pricing)
+    all_pricing.update(bedrock)
+
+    # Project tokens to monthly if period != 30 days
+    monthly_factor = 30.0 / max(days, 1)
+    monthly_prompt = prompt_tokens * monthly_factor
+    monthly_response = response_tokens * monthly_factor
+
+    estimates = []
+    for name, info in ENTERPRISE_PRICING.items():
+        seat_cost = info['monthly_per_seat'] * num_users
+        # Calculate equivalent per-token cost using the underlying model's pricing
+        underlying = info['underlying_model']
+        token_cost = 0.0
+        if underlying in all_pricing:
+            p = all_pricing[underlying]
+            token_cost = (monthly_prompt * p['input'] + monthly_response * p['output']) / 1_000_000
+        estimates.append({
+            'provider': name,
+            'description': info['description'],
+            'monthly_per_seat': info['monthly_per_seat'],
+            'num_users': num_users,
+            'monthly_total': round(seat_cost, 2),
+            'equivalent_token_cost': round(token_cost, 4),
+            'savings_vs_subscription': round(seat_cost - token_cost, 2) if token_cost > 0 else None,
+        })
+    return estimates

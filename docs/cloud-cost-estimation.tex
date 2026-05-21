@@ -206,6 +206,35 @@ Mistral Large 3 & 0.50 & 1.50 \\
 \caption{Amazon Bedrock on-demand pricing (us-east-1, static fallback values)}
 \end{table}
 
+\subsection{Enterprise Subscriptions (Seat-Based)}
+
+Unlike per-token APIs, enterprise AI services charge a flat monthly fee per user. sheLLaMa compares these by calculating what your actual token usage would cost on the underlying per-token API, then showing the difference against the subscription price.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llr}
+\toprule
+\textbf{Service} & \textbf{Underlying Model} & \textbf{\$/seat/month} \\
+\midrule
+Microsoft Copilot & GPT-4o & 30.00 \\
+ChatGPT Team & GPT-4o, o3 & 30.00 \\
+ChatGPT Enterprise & GPT-4o, o3 (unlimited) & 60.00 \\
+Claude Team & Claude 4 Sonnet, Opus 4 & 30.00 \\
+Claude Enterprise & Claude 4 Sonnet (higher limits) & 60.00 \\
+Google Gemini Business & Gemini 2.5 Pro & 24.00 \\
+Google Gemini Enterprise & Gemini 2.5 Pro (unlimited) & 36.00 \\
+Grok (X Premium+) & Grok 3 & 40.00 \\
+Amazon Q Developer Pro & Bedrock Claude 4 Sonnet & 19.00 \\
+Amazon Q Business Pro & Bedrock Nova Pro & 20.00 \\
+\bottomrule
+\end{tabular}
+\caption{Enterprise AI subscription pricing (monthly per seat)}
+\end{table}
+
+The comparison answers: ``Given our team's actual token consumption, is a per-seat subscription cheaper or more expensive than pay-per-token API access?''
+
+For light users, subscriptions are expensive relative to actual API consumption. For heavy users who would exceed API budgets, subscriptions provide cost certainty. The \texttt{/enterprise-costs?users=N\&days=N} endpoint calculates this dynamically.
+
 %----------------------------------------------------------------------
 \section{Cost Estimation Interfaces}
 
@@ -381,7 +410,7 @@ aws pricing get-products --service-code AmazonBedrock \
 
 API keys can have spending limits that are enforced on actual cloud fallback spend:
 
-\begin{lstlisting}[language=json,caption={API key with budget limit}]
+\begin{lstlisting}[language={},caption={API key with budget limit}]
 {
   "api_keys": {
     "sk-team-dev": {
@@ -420,7 +449,7 @@ curl http://server:5000/cloud-costs | python -m json.tool
 
 For larger teams, deploy the frontend load balancer with multiple backends:
 
-\begin{lstlisting}[language=json,caption={backends.json for multi-server deployment}]
+\begin{lstlisting}[language={},caption={backends.json for multi-server deployment}]
 {
   "backends": [
     {"url": "http://192.168.1.230:5000", "weight": 10, "max_model": "qwen2.5-coder:7b"},
@@ -438,7 +467,7 @@ All token tracking is centralized on the frontend, regardless of which backend p
 
 A typical \texttt{/cloud-costs} response after one week of team usage:
 
-\begin{lstlisting}[language=json]
+\begin{lstlisting}[language={}]
 {
   "prompt_tokens": 847293,
   "response_tokens": 2341567,
@@ -469,6 +498,28 @@ The ratio of prompt to response tokens affects provider choice:
 \subsection{Quality vs.\ Cost Tradeoff}
 
 The \texttt{,test} benchmark lets you compare local model quality against cloud alternatives. If a \$0.04/request local model produces acceptable output for 95\% of tasks, the ROI of local infrastructure is clear. The 5\% that needs cloud fallback can be budgeted precisely using the actual fallback tracking.
+
+\subsection{Subscription vs.\ Pay-Per-Token}
+
+The enterprise comparison reveals whether seat-based subscriptions make financial sense:
+
+\begin{lstlisting}[language=bash,caption={Enterprise cost comparison API}]
+# Compare for a 10-person team over 30 days of tracked usage
+curl "http://server:5000/enterprise-costs?users=10&days=30"
+\end{lstlisting}
+
+\begin{lstlisting}[language={}]
+{
+  "enterprise_costs": [
+    {"provider": "Microsoft Copilot", "monthly_total": 300.00,
+     "equivalent_token_cost": 2.25, "savings_vs_subscription": 297.75},
+    {"provider": "Amazon Q Developer Pro", "monthly_total": 190.00,
+     "equivalent_token_cost": 1.80, "savings_vs_subscription": 188.20}
+  ]
+}
+\end{lstlisting}
+
+\textbf{Interpretation}: If the subscription costs \$300/month but the equivalent API usage is only \$2.25, the team is paying 133x more for the subscription than they would on per-token pricing. This is common for light-to-moderate usage. Heavy users (millions of tokens/day) may find subscriptions cheaper due to unlimited usage caps.
 
 %----------------------------------------------------------------------
 \section{Limitations}

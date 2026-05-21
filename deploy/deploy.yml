@@ -93,6 +93,23 @@
         mode: '0755'
       notify: restart backend
 
+    - name: Create shared module directory
+      file:
+        path: /usr/local/shared
+        state: directory
+        mode: '0755'
+
+    - name: Copy shared modules
+      copy:
+        src: "{{ item }}"
+        dest: /usr/local/shared/
+        mode: '0644'
+      loop:
+        - ../shared/__init__.py
+        - ../shared/constants.py
+        - ../shared/auth.py
+      notify: restart backend
+
     - name: Copy index.html
       copy:
         src: ../frontend/web/index.html

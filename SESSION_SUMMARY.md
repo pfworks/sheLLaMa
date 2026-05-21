@@ -1,6 +1,6 @@
 # sheLLaMa - Session Summary
 
-Last updated: May 2, 2026
+Last updated: May 21, 2026
 
 ## Project Overview
 
@@ -132,6 +132,7 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/cloud-costs` | GET | Running cost tab: hypothetical + actual fallback + cached |
+| `/enterprise-costs` | GET | Enterprise subscription comparison: `?users=N&days=N` |
 | `/cost-history` | GET | Token totals by time range: `?since=TS&until=TS` |
 | `/ip-tokens` | GET | Token history per client IP and backend |
 | `/queue-history` | GET | Queue size history for graphs |
@@ -235,6 +236,8 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 - Per-IP, per-key, per-task token tracking for granular cost attribution
 - Benchmark exclusion: /test tokens excluded from running tab
 - Cache awareness: cached responses tracked separately (savings not available on cloud)
+- Enterprise subscription comparison: Microsoft Copilot, ChatGPT Team/Enterprise, Claude Team/Enterprise, Google Gemini Business/Enterprise, Grok (X Premium+), Amazon Q Developer Pro, Amazon Q Business Pro
+- `/enterprise-costs?users=N&days=N` endpoint: compares seat-based subscriptions vs equivalent per-token API spend
 - Use cases: pre-migration planning, provider comparison, ROI calculation, budget forecasting, hybrid optimization
 - White paper: `docs/cloud-cost-estimation.pdf` (LaTeX source: `docs/cloud-cost-estimation.tex`)
 

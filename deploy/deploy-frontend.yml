@@ -60,6 +60,23 @@
         mode: '0755'
       notify: restart frontend
 
+    - name: Create shared module directory
+      file:
+        path: /usr/local/shared
+        state: directory
+        mode: '0755'
+
+    - name: Copy shared modules
+      copy:
+        src: "{{ item }}"
+        dest: /usr/local/shared/
+        mode: '0644'
+      loop:
+        - ../shared/__init__.py
+        - ../shared/constants.py
+        - ../shared/auth.py
+      notify: restart frontend
+
     - name: Copy backends.json
       copy:
         src: backends.json
@@ -92,6 +109,20 @@
       copy:
         src: ../frontend/web/stats.html
         dest: "{{ html_path }}/stats.html"
+        owner: "{{ app_user }}"
+        mode: '0644'
+
+    - name: Copy costs.html
+      copy:
+        src: ../frontend/web/costs.html
+        dest: "{{ html_path }}/costs.html"
+        owner: "{{ app_user }}"
+        mode: '0644'
+
+    - name: Copy settings.html
+      copy:
+        src: ../frontend/web/settings.html
+        dest: "{{ html_path }}/settings.html"
         owner: "{{ app_user }}"
         mode: '0644'
 
