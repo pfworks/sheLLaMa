@@ -252,6 +252,20 @@ The web-based costs page (\texttt{/costs}) provides:
   \item \textbf{Live pricing source}: Shows whether prices are from OpenRouter or static fallback
 \end{itemize}
 
+\subsection{Admin Console --- Cloud Usage Page}
+
+The cloud usage page (\texttt{/cloud-usage}) provides per-client cost attribution:
+
+\begin{itemize}
+  \item \textbf{By Client IP}: Token usage and projected cloud cost per client, with expandable provider breakdown
+  \item \textbf{By API Key}: Same breakdown per authenticated API key
+  \item \textbf{By Cloud Model}: Which fallback models were used and their token consumption
+  \item \textbf{Cost range}: Each row shows cheapest and most expensive provider estimate
+  \item \textbf{Expandable detail}: Click to see full provider-by-provider cost table per client
+\end{itemize}
+
+The underlying API endpoint (\texttt{/cloud-usage-data}) returns JSON with cost estimates computed using the same pricing pipeline as the costs page.
+
 \subsection{CLI Benchmarking}
 
 The \texttt{,test} command provides per-request cost estimates:

@@ -1,0 +1,40 @@
+\contentsline {section}{\numberline {1}Introduction}{2}{section.1}%
+\contentsline {section}{\numberline {2}The Cost Estimation Problem}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Why Estimation is Hard}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}sheLLaMa's Approach}{2}{subsection.2.2}%
+\contentsline {section}{\numberline {3}Architecture for Cost Tracking}{3}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Token Recording Pipeline}{3}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Pricing Data Sources}{3}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Cost Calculation}{3}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Supported Cloud Providers and Models}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}OpenRouter Models (via API)}{4}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Amazon Bedrock Models (via AWS Pricing API)}{4}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Enterprise Subscriptions (Seat-Based)}{4}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Cost Estimation Interfaces}{5}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Admin Console --- Costs Page}{5}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Admin Console --- Cloud Usage Page}{5}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}CLI Benchmarking}{6}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}REST API}{6}{subsection.5.4}%
+\contentsline {section}{\numberline {6}Use Cases for Cost Estimation}{6}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Pre-Migration Planning}{6}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Budget Forecasting}{6}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Provider Comparison}{7}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}ROI Calculation for Local Infrastructure}{7}{subsection.6.4}%
+\contentsline {subsection}{\numberline {6.5}Hybrid Strategy Optimization}{7}{subsection.6.5}%
+\contentsline {section}{\numberline {7}Implementation Details}{8}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Persistent Statistics}{8}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Benchmark Exclusion}{8}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Cache Awareness}{8}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Live Pricing Refresh}{8}{subsection.7.4}%
+\contentsline {subsection}{\numberline {7.5}Per-Key Budget Enforcement}{8}{subsection.7.5}%
+\contentsline {section}{\numberline {8}Deployment for Cost Estimation}{9}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Minimal Setup (Single Server)}{9}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Distributed Setup (Production)}{9}{subsection.8.2}%
+\contentsline {section}{\numberline {9}Interpreting Results}{9}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Reading the Cost Table}{9}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Token Ratio Analysis}{10}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Quality vs.\ Cost Tradeoff}{10}{subsection.9.3}%
+\contentsline {subsection}{\numberline {9.4}Subscription vs.\ Pay-Per-Token}{10}{subsection.9.4}%
+\contentsline {section}{\numberline {10}Limitations}{11}{section.10}%
+\contentsline {section}{\numberline {11}Conclusion}{11}{section.11}%
+\contentsline {section}{\numberline {12}References}{11}{section.12}%

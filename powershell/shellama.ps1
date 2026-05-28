@@ -20,6 +20,7 @@ $script:SessionTokens = 0
 $script:SessionRequests = 0
 $script:SessionElapsed = 0.0
 $script:MaxRounds = 10
+$script:LastOutput = ''
 
 function Invoke-ShellamaChat {
     param([string]$Message, [string]$Model = $script:SHELLAMA_MODEL)
@@ -37,6 +38,8 @@ function Invoke-ShellamaChat {
 function Invoke-ShellamaAgent {
     param([string]$Query, [switch]$Quiet)
     $system = $script:SHELLAMA_SYSTEM_PROMPT -f (Get-Location)
+    $ctx = Get-ShellamaContextBlock
+    if ($ctx) { $system += "`n`nThe user has attached these files as context:`n`n$ctx" }
     $conversation = "$system`n`nUser: $Query"
     $totalTokens = 0; $totalElapsed = 0
 
@@ -52,9 +55,17 @@ function Invoke-ShellamaAgent {
         $totalTokens += $tokens; $totalElapsed += $elapsed
         $script:SessionTokens += $tokens; $script:SessionRequests++; $script:SessionElapsed += $elapsed
 
-        $commands = [regex]::Matches($response, '```powershell\n(.*?)```', 'Singleline') | ForEach-Object { $_.Groups[1].Value.Trim() }
+        # Extract tool blocks
+        $toolBlocks = @()
+        foreach ($m in [regex]::Matches($response, '```(powershell|file_read|file_write\s*\S*)\n(.*?)```', 'Singleline')) {
+            $tag = $m.Groups[1].Value; $content = $m.Groups[2].Value
+            if ($tag -eq 'powershell') { $toolBlocks += @{type='ps'; data=$content.Trim()} }
+            elseif ($tag -eq 'file_read') { foreach ($l in $content.Trim().Split("`n")) { $p=$l.Trim(); if($p){$toolBlocks += @{type='read';data=$p}} } }
+            else { $path = if($tag -match 'file_write\s+(.+)'){$Matches[1]}else{''}; $toolBlocks += @{type='write';data=@($path,$content)} }
+        }
 
-        if ($commands.Count -eq 0) {
+        if ($toolBlocks.Count -eq 0) {
+            $script:LastOutput = $response
             if ($Quiet) { Write-Host $response } else {
                 Write-Host $response -ForegroundColor Cyan
                 Write-Host "[$($round + 1) round$(if($round){'s'}) | $([math]::Round($totalElapsed,1))s | $totalTokens tokens | $($script:SHELLAMA_MODEL)]" -ForegroundColor DarkGray
@@ -63,32 +74,63 @@ function Invoke-ShellamaAgent {
         }
 
         if (-not $Quiet) {
-            $parts = [regex]::Split($response, '```powershell\n.*?```', 'Singleline')
+            $parts = [regex]::Split($response, '```(?:powershell|file_read|file_write\s*\S*)\n.*?```', 'Singleline')
             foreach ($part in $parts) { $part = $part.Trim(); if ($part) { Write-Host $part -ForegroundColor Cyan } }
             Write-Host "[round $($round + 1) | $([math]::Round($elapsed,1))s | $tokens tokens]" -ForegroundColor DarkGray
         }
 
         $cmdOutputs = @()
-        foreach ($cmd in $commands) {
-            Write-Host "PS> $cmd" -ForegroundColor Yellow
-            if (-not $Quiet) {
-                $answer = Read-Host "Run? [Y/n/q]"
-                if ($answer -eq 'q') { return }
-                if ($answer -eq 'n') { $cmdOutputs += "PS> $cmd`n(skipped by user)"; continue }
-            }
-            try {
-                $output = Invoke-Expression $cmd 2>&1 | Out-String
-                if ($output.Trim()) {
-                    if ($Quiet) { Write-Host $output.Trim() } else { Write-Host $output.Trim() -ForegroundColor DarkGray }
+        foreach ($block in $toolBlocks) {
+            if ($block.type -eq 'read') {
+                Write-Host "┌─ 📖 read: $($block.data)" -ForegroundColor Yellow
+                $resolved = if([IO.Path]::IsPathRooted($block.data)){$block.data}else{Join-Path(Get-Location)$block.data}
+                try { $out=(Get-Content $resolved -ErrorAction Stop|ForEach-Object -Begin{$i=1} -Process{"{0,4} | {1}" -f $i++,$_}) -join "`n" } catch { $out="Error: $_" }
+                if(-not $Quiet){$lines=$out.Split("`n"); if($lines.Count -gt 20){Write-Host ($lines[0..9]-join"`n") -ForegroundColor DarkGray; Write-Host "   ... ($($lines.Count) lines)" -ForegroundColor DarkGray}else{Write-Host $out -ForegroundColor DarkGray}}
+                $cmdOutputs += "[read $($block.data)]`n$out"
+            } elseif ($block.type -eq 'write') {
+                $path=$block.data[0]; $content=$block.data[1]; $lc=($content.Split("`n")).Count
+                Write-Host "┌─ ✏️  write: $path ($lc lines)" -ForegroundColor Yellow
+                if (-not $Quiet) {
+                    ($content.Split("`n")|Select-Object -First 5)|ForEach-Object{Write-Host "  $_" -ForegroundColor DarkGray}
+                    $answer = Read-Host "└─ Write? [y/N/q]"
+                    if($answer -eq 'q'){return}
+                    if($answer -ne 'y'){$cmdOutputs += "[write $path]`n(skipped)"; Write-Host "   (skipped)" -ForegroundColor DarkGray; continue}
                 }
-                $cmdOutputs += "PS> $cmd`n$output"
-            } catch {
-                Write-Host "Error: $_" -ForegroundColor Red
-                $cmdOutputs += "PS> $cmd`nError: $_"
+                $resolved = if([IO.Path]::IsPathRooted($path)){$path}else{Join-Path(Get-Location)$path}
+                $dir=[IO.Path]::GetDirectoryName($resolved); if($dir -and -not(Test-Path $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null}
+                Set-Content -Path $resolved -Value $content -Encoding UTF8 -NoNewline
+                Write-Host "Wrote $lc lines to $resolved" -ForegroundColor DarkGray
+                $cmdOutputs += "[write $path]`nWrote $lc lines to $resolved"
+            } else {
+                $cmd = $block.data
+                $perm = Get-ShellCmdPermission $cmd
+                if ($perm -eq 'block') { Write-Host "┌─ ⛔ BLOCKED: $cmd" -ForegroundColor Red; $cmdOutputs += "PS> $cmd`n(BLOCKED)"; continue }
+                Write-Host "┌─ PS> $cmd" -ForegroundColor Yellow
+                if ($perm -eq 'prompt' -and -not $Quiet) {
+                    $answer = Read-Host "└─ Run? [y/N/q]"
+                    if($answer -eq 'q'){return}
+                    if($answer -ne 'y'){$cmdOutputs += "PS> $cmd`n(skipped)"; Write-Host "   (skipped)" -ForegroundColor DarkGray; continue}
+                }
+                try { $output=Invoke-Expression $cmd 2>&1|Out-String; if($output.Trim()){if($Quiet){Write-Host $output.Trim()}else{Write-Host $output.Trim() -ForegroundColor DarkGray}}; $cmdOutputs += "PS> $cmd`n$output" }
+                catch { Write-Host "Error: $_" -ForegroundColor Red; $cmdOutputs += "PS> $cmd`nError: $_" }
             }
         }
         $results = $cmdOutputs -join "`n`n"
-        $conversation += "`n`nAssistant: $response`n`nCommand output:`n$results`n`nContinue. If you have enough information, give your final answer without any ``````powershell blocks."
+        $conversation += "`n`nAssistant: $response`n`nTool output:`n$results`n`nContinue. If you have enough information, give your final answer as plain text without any tool blocks."
+        # Auto-compact
+        if ($conversation.Length -gt 24000) {
+            $afterSys = $conversation.Substring($system.Length)
+            $turns = [regex]::Split($afterSys, '(?=\n\n(?:User:|Assistant:|Tool output:))')
+            if ($turns.Count -gt 4) {
+                $toSum = ($turns[0..($turns.Count-5)]) -join ''
+                $toKeep = ($turns[($turns.Count-4)..($turns.Count-1)]) -join ''
+                $sr = Invoke-ShellamaChat -Message "Summarize concisely. Keep key facts, decisions, files modified:`n`n$toSum"
+                if ($sr -and -not $sr.error) {
+                    Write-Host "[compacted]" -ForegroundColor DarkGray
+                    $conversation = "$system`n`nConversation summary:`n$($sr.response)`n`n$toKeep"
+                }
+            }
+        }
     }
     Write-Host "[max rounds reached | $([math]::Round($totalElapsed,1))s | $totalTokens tokens]" -ForegroundColor DarkGray
 }
@@ -103,10 +145,91 @@ function Invoke-ShellamaSimple {
         $script:SessionTokens += ($resp.total_tokens -as [int])
         $script:SessionRequests++
         $script:SessionElapsed += ($resp.elapsed -as [double])
+        $script:LastOutput = $resp.$ResultKey
         Write-Host $resp.$ResultKey -ForegroundColor Cyan
         Write-Host "[$($resp.elapsed)s | $($resp.total_tokens) tokens | $($script:SHELLAMA_MODEL)]" -ForegroundColor DarkGray
     } catch {
         Write-Host "shellama: $_" -ForegroundColor Red
+    }
+}
+
+# Permission tiers
+$script:_BlockedPats = @('Remove-Item\s+.*-Recurse.*-Force','Format-Volume','Clear-Disk','Stop-Computer','Restart-Computer','git\s+push\s+.*--force','git\s+push\s+-f\b','git\s+reset\s+--hard','git\s+clean\s+-[a-zA-Z]*f','rm\s+-rf\s','Invoke-Expression.*\|\s*iex')
+$script:_ReadonlyPats = @('^(Get-ChildItem|gci|ls|dir)(\s|$)','^Get-Content\s','^Get-Item\s','^Test-Path\s','^Get-Location$','^pwd$','^whoami$','^Get-Process','^Get-Service','^Get-Date$','^Get-Command\s','^Get-Help\s','^\$env:','^\$PSVersionTable','^git\s+(status|log|diff|show|branch|tag|remote)','^Select-String\s','^Write-Host\s','^Write-Output\s','^curl\s','^systemctl\s+status','^docker\s+(ps|images|inspect|logs)')
+
+function Get-ShellCmdPermission { param([string]$Cmd)
+    foreach($p in $script:_BlockedPats){if($Cmd -match $p){return 'block'}}
+    foreach($p in $script:_ReadonlyPats){if($Cmd -match $p){return 'allow'}}
+    return 'prompt'
+}
+
+# Context files
+$script:_ContextFile = Join-Path $HOME '.shellama/context.json'
+function Get-ShellamaContextBlock {
+    if (-not (Test-Path $script:_ContextFile)) { return '' }
+    try { $paths = Get-Content $script:_ContextFile -Raw | ConvertFrom-Json } catch { return '' }
+    if (-not $paths -or $paths.Count -eq 0) { return '' }
+    $parts = @()
+    foreach ($p in $paths) {
+        $resolved = if([IO.Path]::IsPathRooted($p)){$p}else{Join-Path(Get-Location)$p}
+        try { $c = Get-Content $resolved -Raw -ErrorAction Stop; $parts += "--- CONTEXT FILE: $p ---`n$c`n--- END ---" }
+        catch { $parts += "--- CONTEXT FILE: $p ---`n(error: $_)`n--- END ---" }
+    }
+    return ($parts -join "`n`n")
+}
+
+function ,context {
+    $sub = $args -join ' '
+    if ($sub.StartsWith('add ')) {
+        $file = $sub.Substring(4).Trim()
+        $resolved = if([IO.Path]::IsPathRooted($file)){$file}else{Join-Path(Get-Location)$file}
+        if (-not (Test-Path $resolved)) { Write-Host "shellama: ${file}: not found" -ForegroundColor Red; return }
+        $paths = @(); if(Test-Path $script:_ContextFile){try{$paths=@(Get-Content $script:_ContextFile -Raw|ConvertFrom-Json)}catch{}}
+        $store = try{[IO.Path]::GetRelativePath((Get-Location),$resolved)}catch{$resolved}
+        if ($store -in $paths) { Write-Host "already in context" -ForegroundColor Red; return }
+        $paths += $store
+        $dir=[IO.Path]::GetDirectoryName($script:_ContextFile); if(-not(Test-Path $dir)){New-Item -ItemType Directory -Path $dir -Force|Out-Null}
+        $paths|ConvertTo-Json|Set-Content $script:_ContextFile -Encoding UTF8
+        Write-Host "context added: $store" -ForegroundColor Cyan
+    } elseif ($sub -match '^(remove|rm)\s+(.+)') {
+        $file=$Matches[2].Trim(); $paths=@(); if(Test-Path $script:_ContextFile){try{$paths=@(Get-Content $script:_ContextFile -Raw|ConvertFrom-Json)}catch{}}
+        $paths=@($paths|Where-Object{$_ -ne $file})
+        $paths|ConvertTo-Json|Set-Content $script:_ContextFile -Encoding UTF8
+        Write-Host "context removed: $file" -ForegroundColor Cyan
+    } elseif ($sub -eq 'clear') {
+        @()|ConvertTo-Json|Set-Content $script:_ContextFile -Encoding UTF8
+        Write-Host "context cleared" -ForegroundColor Cyan
+    } else {
+        if(-not(Test-Path $script:_ContextFile)){Write-Host "no context files (use ,context add <file>)" -ForegroundColor DarkGray; return}
+        try{$paths=@(Get-Content $script:_ContextFile -Raw|ConvertFrom-Json)}catch{Write-Host "no context files" -ForegroundColor DarkGray; return}
+        if($paths.Count -eq 0){Write-Host "no context files (use ,context add <file>)" -ForegroundColor DarkGray; return}
+        foreach($p in $paths){$resolved=if([IO.Path]::IsPathRooted($p)){$p}else{Join-Path(Get-Location)$p}; $sz=if(Test-Path $resolved){(Get-Item $resolved).Length}else{0}; Write-Host "  $p  ($sz bytes)" -ForegroundColor Yellow}
+    }
+}
+
+function ,session {
+    $sub = $args -join ' '
+    $sessDir = Join-Path $HOME '.shellama/sessions'
+    if ($sub.StartsWith('save')) {
+        $name = $sub.Substring(4).Trim(); if(-not $name){$name=$script:SHELLAMA_CONV_ID.Substring(0,8)}
+        if(-not(Test-Path $sessDir)){New-Item -ItemType Directory -Path $sessDir -Force|Out-Null}
+        @{conversation_id=$script:SHELLAMA_CONV_ID;model=$script:SHELLAMA_MODEL;tokens=$script:SessionTokens;requests=$script:SessionRequests;elapsed=$script:SessionElapsed;cwd=(Get-Location).Path;saved_at=[int](Get-Date -UFormat %s)}|ConvertTo-Json|Set-Content(Join-Path $sessDir "$name.json") -Encoding UTF8
+        Write-Host "session saved: $name" -ForegroundColor Cyan
+    } elseif ($sub.StartsWith('load')) {
+        $name=$sub.Substring(4).Trim()
+        if(-not(Test-Path $sessDir)){Write-Host "no saved sessions" -ForegroundColor Red; return}
+        $files=Get-ChildItem $sessDir -Filter *.json|Sort-Object LastWriteTime -Descending
+        if($files.Count -eq 0){Write-Host "no saved sessions" -ForegroundColor Red; return}
+        if($name){$pick=$files|Where-Object{$_.BaseName -like "*$name*"}|Select-Object -First 1; if(-not $pick){Write-Host "no match" -ForegroundColor Red; return}}
+        else{for($i=0;$i -lt [math]::Min($files.Count,20);$i++){Write-Host "  $($i+1)) $($files[$i].BaseName)" -ForegroundColor Yellow}; $c=Read-Host "Load"; if(-not($c -match '^\d+$')){return}; $pick=$files[[int]$c-1]}
+        $meta=Get-Content $pick.FullName -Raw|ConvertFrom-Json
+        $script:SHELLAMA_CONV_ID=$meta.conversation_id; $script:SessionTokens=$meta.tokens; $script:SessionRequests=$meta.requests; $script:SessionElapsed=$meta.elapsed
+        Write-Host "loaded: $($pick.BaseName) ($($meta.requests) reqs)" -ForegroundColor Cyan
+    } else {
+        if(-not(Test-Path $sessDir)){Write-Host "no saved sessions" -ForegroundColor Red; return}
+        $files=Get-ChildItem $sessDir -Filter *.json|Sort-Object LastWriteTime -Descending
+        if($files.Count -eq 0){Write-Host "no saved sessions" -ForegroundColor Red; return}
+        foreach($f in $files){$m=Get-Content $f.FullName -Raw|ConvertFrom-Json; Write-Host "  $($f.BaseName)  [$($m.requests) reqs | $($m.tokens) tok]" -ForegroundColor Yellow}
     }
 }
 
@@ -214,6 +337,16 @@ function ,models {
 
 function ,tokens { Write-Host "Session usage: $($script:SessionRequests) requests | $($script:SessionTokens) tokens | $([math]::Round($script:SessionElapsed,1))s" -ForegroundColor Cyan }
 
+function ,save {
+    $file = $args -join ' '
+    if (-not $file) { Write-Host "Usage: ,save <filename>" -ForegroundColor Red; return }
+    if (-not $script:LastOutput) { Write-Host "shellama: nothing to save (no AI output yet)" -ForegroundColor Red; return }
+    $content = $script:LastOutput.Trim()
+    if ($content -match '(?s)^```\w*\n(.*?)```$') { $content = $Matches[1] }
+    Set-Content -Path $file -Value $content -Encoding UTF8
+    Write-Host "saved: $file ($($content.Length) chars)"
+}
+
 function ,list {
     Write-Host ",  <prompt>       agentic chat" -ForegroundColor Yellow
     Write-Host ",,  <prompt>      quiet mode" -ForegroundColor Yellow
@@ -221,6 +354,9 @@ function ,list {
     Write-Host ",generate <desc>  generate code" -ForegroundColor Yellow
     Write-Host ",analyze  <path>  analyze files/dirs" -ForegroundColor Yellow
     Write-Host ",img <prompt>     generate image" -ForegroundColor Yellow
+    Write-Host ",save <file>      save last output" -ForegroundColor Yellow
+    Write-Host ",session          save/load sessions" -ForegroundColor Yellow
+    Write-Host ",context          manage context files" -ForegroundColor Yellow
     Write-Host ",test [model]     benchmark models" -ForegroundColor Yellow
     Write-Host ",models           select model" -ForegroundColor Yellow
     Write-Host ",tokens           session usage" -ForegroundColor Yellow
@@ -237,7 +373,7 @@ function ,exit {
     # Restore original prompt
     Set-Item Function:\prompt $script:_OriginalPrompt
     # Remove all , functions
-    ',', ',,', ',explain', ',generate', ',analyze', ',img', ',test', ',models', ',tokens', ',list', ',help', ',exit' | ForEach-Object {
+    ',', ',,', ',explain', ',generate', ',analyze', ',img', ',save', ',session', ',context', ',test', ',models', ',tokens', ',list', ',help', ',exit' | ForEach-Object {
         Remove-Item "Function:\$_" -ErrorAction SilentlyContinue
     }
     Remove-Variable _OriginalPrompt -Scope Script -ErrorAction SilentlyContinue

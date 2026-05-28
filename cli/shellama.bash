@@ -37,7 +37,7 @@ PS1="🔴 ${PS1}"
 
 # Unload sheLLaMa
 ,exit() {
-    unset -f , ,, ,do ,explain ,generate ,analyze ,img ,save ,test ,models ,tokens ,list ,help ,exit
+    unset -f , ,, ,do ,explain ,generate ,analyze ,img ,save ,session ,context ,test ,models ,tokens ,list ,help ,exit
     PS1="$_SHELLAMA_ORIG_PS1"
     unset _SHELLAMA_ORIG_PS1 SHELLAMA_CONV_ID
     echo "sheLLaMa unloaded"
@@ -68,6 +68,8 @@ PS1="🔴 ${PS1}"
 ,analyze()  { python3 "$SHELLAMA_BIN" analyze "$@"; }
 ,img()      { python3 "$SHELLAMA_BIN" img "$@"; }
 ,save()     { python3 "$SHELLAMA_BIN" save "$@"; }
+,session()  { python3 "$SHELLAMA_BIN" session "$@"; }
+,context()  { python3 "$SHELLAMA_BIN" context "$@"; }
 ,test()     { python3 "$SHELLAMA_BIN" test "$@"; }
 ,models()   { python3 "$SHELLAMA_BIN" models "$@"; }
 ,tokens()   { python3 "$SHELLAMA_BIN" tokens "$@"; }

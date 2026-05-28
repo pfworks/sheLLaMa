@@ -38,6 +38,7 @@
             <a href="/backends">Backends</a>
             <a href="/stats">Stats</a>
             <a href="/costs">Costs</a>
+            <a href="/cloud-usage">Cloud Usage</a>
         </div>
         <div id="msg" class="msg"></div>
 
@@ -74,6 +75,35 @@
                 <input id="webhook-url" placeholder="https://hooks.example.com/shellama" style="width:400px">
                 <button class="btn" onclick="addWebhook()">Add</button>
             </div>
+        </div>
+
+        <!-- Command Permissions -->
+        <div class="section">
+            <div class="section-title">Command Permissions (Agentic Shell)</div>
+            <div style="opacity:0.7;font-size:12px;margin-bottom:10px">Auto-allowed commands run without confirmation. Blocked commands are always refused.</div>
+
+            <details style="margin-bottom:15px">
+                <summary style="cursor:pointer;color:#00ff00">Auto-Allowed Patterns (click to expand)</summary>
+                <div id="allowed-list" style="margin-top:8px;max-height:300px;overflow-y:auto"></div>
+                <div style="margin-top:10px">
+                    <input id="allow-pattern" placeholder="^command\s" style="width:400px">
+                    <button class="btn" onclick="addAllowed()">Add</button>
+                </div>
+            </details>
+
+            <details style="margin-bottom:15px">
+                <summary style="cursor:pointer;color:#ff4444">Blocked Patterns — Built-in (cannot be removed)</summary>
+                <div id="blocked-immutable-list" style="margin-top:8px;max-height:200px;overflow-y:auto"></div>
+            </details>
+
+            <details>
+                <summary style="cursor:pointer;color:#ff8800">Blocked Patterns — Custom</summary>
+                <div id="blocked-custom-list" style="margin-top:8px"></div>
+                <div style="margin-top:10px">
+                    <input id="block-pattern" placeholder="dangerous_command" style="width:400px">
+                    <button class="btn danger" onclick="addBlocked()">Add Block Rule</button>
+                </div>
+            </details>
         </div>
     </div>
 
@@ -168,7 +198,57 @@
             }).then(() => { showMsg('Removed webhook', true); loadWebhooks(); });
         }
 
-        loadAliases(); loadToggles(); loadWebhooks();
+        // Permissions
+        function loadPermissions() {
+            fetch('/api/permissions').then(r=>r.json()).then(d => {
+                // Allowed
+                const al = document.getElementById('allowed-list');
+                al.innerHTML = (d.allowed||[]).map(p =>
+                    `<div class="item"><code style="font-size:12px">${esc(p)}</code><button class="btn danger" onclick="rmAllowed('${esc(p)}')">✕</button></div>`
+                ).join('');
+                // Blocked immutable
+                const bi = document.getElementById('blocked-immutable-list');
+                bi.innerHTML = (d.blocked_immutable||[]).map(p =>
+                    `<div class="item"><code style="font-size:12px;color:#ff4444">${esc(p)}</code><span style="opacity:0.4;font-size:11px">🔒 locked</span></div>`
+                ).join('');
+                // Blocked custom
+                const bc = document.getElementById('blocked-custom-list');
+                bc.innerHTML = (d.blocked_custom||[]).length === 0
+                    ? '<div style="opacity:0.5">No custom block rules</div>'
+                    : (d.blocked_custom||[]).map(p =>
+                        `<div class="item"><code style="font-size:12px;color:#ff8800">${esc(p)}</code><button class="btn danger" onclick="rmBlocked('${esc(p)}')">✕</button></div>`
+                    ).join('');
+            });
+        }
+        function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+        function addAllowed() {
+            const p = document.getElementById('allow-pattern').value.trim();
+            if (!p) return;
+            fetch('/api/permissions', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({add_allowed: p})
+            }).then(r=>r.json()).then(d => { if(d.error) showMsg(d.error,false); else { showMsg('Added allow rule',true); loadPermissions(); } });
+            document.getElementById('allow-pattern').value = '';
+        }
+        function rmAllowed(p) {
+            fetch('/api/permissions', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({remove_allowed: p})
+            }).then(() => { showMsg('Removed',true); loadPermissions(); });
+        }
+        function addBlocked() {
+            const p = document.getElementById('block-pattern').value.trim();
+            if (!p) return;
+            fetch('/api/permissions', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({add_blocked: p})
+            }).then(r=>r.json()).then(d => { if(d.error) showMsg(d.error,false); else { showMsg('Added block rule',true); loadPermissions(); } });
+            document.getElementById('block-pattern').value = '';
+        }
+        function rmBlocked(p) {
+            fetch('/api/permissions', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({remove_blocked: p})
+            }).then(r=>r.json()).then(d => { if(d.error) showMsg(d.error,false); else { showMsg('Removed',true); loadPermissions(); } });
+        }
+
+        loadAliases(); loadToggles(); loadWebhooks(); loadPermissions();
     </script>
     <script>
     function initAuth() {

@@ -15,6 +15,12 @@ Local LLM-powered tool for code generation, explanation, shell-to-Ansible conver
 
 **Agentic Shell:**
 - AI proposes bash/PowerShell commands, executes them (with confirmation), reads output, iterates up to 10 rounds
+- Structured file tools: `file_read` (auto-allowed), `file_write` (preview + confirm), `bash`/`powershell` (tiered permissions)
+- Permission tiers: read-only commands auto-run, destructive commands blocked, everything else prompts
+- Permission management via admin console (Settings page) — editable allow list, immutable block list
+- Context files: attach files that get injected into every prompt automatically
+- Conversation save/load: persist and resume sessions across terminal restarts
+- Auto-compaction: long conversations are automatically summarized to stay within context limits
 - Quiet mode for scripting (output only, no confirmations)
 - Bash environment snapshot (functions, aliases, variables) inherited by AI commands
 
@@ -25,7 +31,7 @@ Local LLM-powered tool for code generation, explanation, shell-to-Ansible conver
 - PowerShell integration (`powershell/shellama.ps1`) — dot-source in $PROFILE for , commands
 - PowerShell GUI (`powershell/powershellama-gui.ps1`, `powershell/powershellama-gui.cmd`) — Windows
 - Python GUI (`cli/shellama-gui.pyw`) — cross-platform
-- Admin console: Status, Backends, Stats, Costs, Settings pages
+- Admin console: Status, Backends, Stats, Costs, Cloud Usage, Settings pages
 - OpenAI-compatible API (`/v1/chat/completions`) — works with Cursor, Continue, Open WebUI, LangChain
 - REST API — custom endpoints for chat, code gen, explain, analyze, image gen, benchmarking
 
@@ -65,7 +71,9 @@ shellama/
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details
 │       ├── stats.html         # Admin: charts and graphs
-│       └── costs.html         # Admin: cloud cost tracking
+│       ├── costs.html         # Admin: cloud cost tracking
+│       ├── cloud-usage.html   # Admin: cloud backend usage by IP/key
+│       └── settings.html      # Admin: permissions, aliases, webhooks
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook
 │   ├── deploy-frontend.yml    # Frontend playbook
@@ -148,6 +156,14 @@ The CLI is a full bash shell with AI integration. Regular commands run in bash. 
 | `,generate <desc>` | Generate code (detects `ansible\|playbook\|shell command`→playbook) |
 | `,analyze <paths>` | Analyze files and/or directories recursively |
 | `,img <prompt>` | Generate image (Stable Diffusion) |
+| `,save <file>` | Save last AI output to a file (strips markdown fences) |
+| `,session save [name]` | Save conversation session to `~/.shellama/sessions/` |
+| `,session load [name]` | Load a saved session (interactive picker or by name) |
+| `,session list` | List saved sessions |
+| `,context add <file>` | Attach file to every prompt as context |
+| `,context remove <file>` | Remove file from context |
+| `,context list` | Show attached context files |
+| `,context clear` | Remove all context files |
 | `,models` | List and select model |
 | `,test [model\|all] [--prompt "..."]` | Benchmark models — compare speed, tokens, cloud cost |
 | `,tokens` | Show session usage stats |
@@ -209,6 +225,8 @@ Access at `http://your-server:5000` (redirects to `/status`)
 | Backends | `/backends` | Per-backend details: online/offline, CPU/RAM, weight, models, active task |
 | Stats | `/stats` | Charts: queue size and token usage over time (hour/day/week/month/year) |
 | Costs | `/costs` | Cloud cost tracking by day/week/month/year/custom range, fallback spend |
+| Cloud Usage | `/cloud-usage` | Cloud backend usage by IP and API key, with per-client cost projections |
+| Settings | `/settings` | Model aliases, feature toggles, webhooks, command permissions |
 
 ## REST API
 
@@ -281,6 +299,7 @@ curl http://server:5000/queue-status
 | `/image-models` | GET | List image generation models |
 | `/test` | POST | Benchmark models: `{"model": "all\|name", "prompt": "..."}` |
 | `/cloud-costs` | GET | Running tab: what total usage would cost on cloud providers |
+| `/cloud-usage-data` | GET | Cloud fallback usage by IP, API key, and model with cost estimates |
 | `/enterprise-costs` | GET | Enterprise subscription comparison: `?users=N&days=N` |
 | `/ip-tokens` | GET | Token usage history per client IP and per backend |
 | `/queue-history` | GET | Queue size history for graphs |
@@ -292,6 +311,7 @@ curl http://server:5000/queue-status
 | `/costs` | GET | Cost tracking page (day/week/month/year/custom range) |
 | `/cost-history` | GET | Token totals filtered by time: `?since=TIMESTAMP&until=TIMESTAMP` |
 | `/api/backends` | GET/POST | Get or update backend config (tasks, weight, max_model) |
+| `/api/permissions` | GET/POST | Get or update command permission patterns (allow/block lists) |
 | `/auto-fallback` | GET/POST | Get or toggle auto cloud fallback mode |
 
 ## Deployment
@@ -374,6 +394,7 @@ tail -f /var/log/ansible-ollama.log
 | `SHELLAMA_MODEL` | `qwen2.5-coder:7b` | Default model |
 | `AI_IMAGE_MODEL` | `sdxl-turbo` | Image generation model (`sd-turbo` recommended for speed) |
 | `SHELLAMA_TASK_TIMEOUT` | `1800` | Max task runtime seconds (backend, 0 = no limit) |
+| `SHELLAMA_COMPACT_THRESHOLD` | `24000` | Auto-compact conversation at this char count (~6K tokens) |
 | `AI_PS1` | (bash PS1) | Custom prompt (bash CLI only) |
 | `AI_QUIET` | `false` | Start in quiet mode (bash CLI only) |
 | `OPENROUTER_API_KEY` | *(empty)* | Cloud fallback API key |

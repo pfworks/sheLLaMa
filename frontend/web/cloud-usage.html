@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>sheLLaMa - Cloud Usage</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #1e1e1e; color: #00ff00; padding: 20px; margin: 0; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { text-align: center; border-bottom: 2px solid #00ff00; padding-bottom: 10px; }
+        h2 { margin-top: 30px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .nav { text-align: center; margin: 20px 0; }
+        .nav a { color: #00ff00; border: 2px solid #00ff00; padding: 10px 24px; margin: 0 5px; text-decoration: none; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 16px; }
+        .nav a.active { background: #00ff00; color: #000; }
+        .nav a:hover { background: #00ff0033; }
+        a { color: #00ff00; }
+        .summary { background: #2b2b2b; border: 2px solid #00ff00; padding: 20px; margin: 20px 0; border-radius: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #333; }
+        th { opacity: 0.7; }
+        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        .no-data { text-align: center; opacity: 0.5; padding: 40px; }
+        .model-tag { display: inline-block; background: #ff880033; border: 1px solid #ff8800; color: #ff8800; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin: 2px; }
+        .cost-range { font-size: 12px; opacity: 0.8; }
+        .cost-cheap { color: #44ff44; }
+        .cost-expensive { color: #ff4444; }
+        .expand-btn { cursor: pointer; background: none; border: 1px solid #555; color: #00ff00; padding: 2px 8px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 11px; }
+        .expand-btn:hover { border-color: #00ff00; }
+        .cost-detail { display: none; margin-top: 8px; padding: 10px; background: #1e1e1e; border: 1px solid #333; border-radius: 3px; }
+        .cost-detail table { margin: 0; }
+        .cost-detail td, .cost-detail th { padding: 4px 8px; font-size: 12px; }
+        .refresh-info { text-align: center; margin-top: 20px; font-size: 14px; opacity: 0.7; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>sheLLaMa - Cloud Usage &amp; Cost Breakdown</h1>
+        <div class="nav">
+            <a href="/status">Overview</a>
+            <a href="/backends">Backends</a>
+            <a href="/stats">Stats</a>
+            <a href="/costs">Costs</a>
+            <a href="/cloud-usage" class="active">Cloud Usage</a>
+            <a href="/settings">Settings</a>
+        </div>
+
+        <h2>By Cloud Model (Fallback Only)</h2>
+        <div class="summary" id="model-section">
+            <div class="no-data">Loading...</div>
+        </div>
+
+        <h2>By Client IP</h2>
+        <div class="summary" id="ip-section">
+            <div class="no-data">Loading...</div>
+        </div>
+
+        <h2>By API Key</h2>
+        <div class="summary" id="key-section">
+            <div class="no-data">Loading...</div>
+        </div>
+
+        <div class="refresh-info">Auto-refreshing every 10 seconds</div>
+    </div>
+    <script>
+        function fmt(n) { return (n || 0).toLocaleString(); }
+        function money(n) { return n < 0.01 ? '$' + n.toFixed(6) : '$' + n.toFixed(4); }
+        function ago(ts) {
+            if (!ts) return '-';
+            const s = Math.floor(Date.now()/1000 - ts);
+            if (s < 60) return s + 's ago';
+            if (s < 3600) return Math.floor(s/60) + 'm ago';
+            if (s < 86400) return Math.floor(s/3600) + 'h ago';
+            return Math.floor(s/86400) + 'd ago';
+        }
+        function modelTags(models) {
+            return Object.entries(models || {}).map(([m,c]) =>
+                `<span class="model-tag">${m} (${c})</span>`
+            ).join(' ');
+        }
+        function costCell(d, id) {
+            if (!d.cheapest) return '<td>-</td>';
+            let html = `<td><span class="cost-range"><span class="cost-cheap">${money(d.cheapest.total_cost)}</span> — <span class="cost-expensive">${money(d.costliest.total_cost)}</span></span> `;
+            html += `<button class="expand-btn" onclick="toggleDetail('${id}')">▶</button>`;
+            html += `<div class="cost-detail" id="detail-${id}">`;
+            html += '<table><tr><th>Provider</th><th>Input</th><th>Output</th><th>Total</th></tr>';
+            for (const c of d.cloud_costs) {
+                html += `<tr><td>${c.provider}</td><td class="num">${money(c.input_cost)}</td><td class="num">${money(c.output_cost)}</td><td class="num">${money(c.total_cost)}</td></tr>`;
+            }
+            html += '</table></div></td>';
+            return html;
+        }
+        function toggleDetail(id) {
+            const el = document.getElementById('detail-' + id);
+            el.style.display = el.style.display === 'block' ? 'none' : 'block';
+        }
+        let counter = 0;
+        function renderTable(data, showModels, prefix) {
+            if (!data || Object.keys(data).length === 0) return '<div class="no-data">No usage recorded yet</div>';
+            let rows = Object.entries(data).sort((a,b) => b[1].prompt_tokens + b[1].response_tokens - a[1].prompt_tokens - a[1].response_tokens);
+            let html = '<table><tr><th>Name</th><th>Requests</th>';
+            if (showModels) html += '<th>Fallbacks</th>';
+            html += '<th>Prompt Tokens</th><th>Response Tokens</th><th>Total</th><th>Cloud Cost (if billed)</th>';
+            if (showModels) html += '<th>Models Used</th><th>Last Active</th>';
+            html += '</tr>';
+            for (const [name, d] of rows) {
+                const id = prefix + (counter++);
+                html += `<tr><td>${name}</td><td class="num">${fmt(d.requests)}</td>`;
+                if (showModels) html += `<td class="num">${fmt(d.fallback_requests || 0)}</td>`;
+                html += `<td class="num">${fmt(d.prompt_tokens)}</td><td class="num">${fmt(d.response_tokens)}</td><td class="num">${fmt(d.prompt_tokens + d.response_tokens)}</td>`;
+                html += costCell(d, id);
+                if (showModels) html += `<td>${modelTags(d.models)}</td><td>${ago(d.last_used)}</td>`;
+                html += '</tr>';
+            }
+            html += '</table>';
+            return html;
+        }
+        function update() {
+            counter = 0;
+            fetch('/cloud-usage-data').then(r => r.json()).then(data => {
+                document.getElementById('model-section').innerHTML = renderTable(data.by_model, false, 'm');
+                document.getElementById('ip-section').innerHTML = renderTable(data.by_ip, true, 'i');
+                document.getElementById('key-section').innerHTML = renderTable(data.by_key, true, 'k');
+            }).catch(() => {});
+        }
+        update();
+        setInterval(update, 10000);
+    </script>
+<script>
+function initAuth() {
+    fetch("/sso/userinfo").then(r=>r.json()).then(d=>{
+        const role = d.role || "admin";
+        if (role !== "admin") {
+            document.querySelectorAll(".admin-only").forEach(el => el.style.display = "none");
+        }
+        const nav = document.querySelector(".nav");
+        if (d.authenticated) {
+            nav.insertAdjacentHTML("beforeend", ' <a href="/sso/logout" style="border-color:#ff8800;color:#ff8800">' + (d.user.name || d.user.email || "logout") + ' ↗</a>');
+        } else if (d.role === "none") {
+            nav.insertAdjacentHTML("beforeend", ' <a href="/sso/login" style="border-color:#ff8800;color:#ff8800">Login</a>');
+        }
+    }).catch(()=>{});
+}
+initAuth();
+</script>
+</body>
+</html>

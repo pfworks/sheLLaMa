@@ -30,6 +30,233 @@ session_elapsed = 0.0
 last_output = ''  # Last AI response for ,save
 import uuid as _uuid
 SESSION_CONV_ID = os.environ.get('SHELLAMA_CONV_ID', str(_uuid.uuid4()))
+import tempfile as _tempfile
+_LAST_OUTPUT_FILE = os.path.join(_tempfile.gettempdir(), f'shellama-last-{SESSION_CONV_ID}.txt')
+
+def _persist_last_output():
+    """Write last_output to a session temp file so ,save works across invocations."""
+    try:
+        with open(_LAST_OUTPUT_FILE, 'w') as f:
+            f.write(last_output)
+    except Exception:
+        pass
+
+def _load_last_output():
+    """Load last_output from session temp file."""
+    try:
+        with open(_LAST_OUTPUT_FILE, 'r') as f:
+            return f.read()
+    except Exception:
+        return ''
+
+# Session save/load
+SESSIONS_DIR = os.path.expanduser('~/.shellama/sessions')
+
+def session_save(name=''):
+    """Save current conversation session to disk."""
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    if not name:
+        name = SESSION_CONV_ID[:8]
+    filepath = os.path.join(SESSIONS_DIR, f'{name}.json')
+    import json as _json
+    data = {
+        'conversation_id': SESSION_CONV_ID,
+        'model': MODEL,
+        'tokens': session_tokens,
+        'requests': session_requests,
+        'elapsed': session_elapsed,
+        'cwd': os.getcwd(),
+        'saved_at': __import__('time').time(),
+    }
+    with open(filepath, 'w') as f:
+        _json.dump(data, f, indent=2)
+    print(f"{CYAN}session saved: {name}{RESET}")
+    print(f"{GRAY}{filepath}{RESET}", file=sys.stderr)
+
+
+def session_load(name=''):
+    """Load a saved conversation session."""
+    global SESSION_CONV_ID, session_tokens, session_requests, session_elapsed
+    import json as _json
+    if not os.path.isdir(SESSIONS_DIR):
+        print("shellama: no saved sessions", file=sys.stderr)
+        return
+    sessions = sorted(
+        [f for f in os.listdir(SESSIONS_DIR) if f.endswith('.json')],
+        key=lambda f: os.path.getmtime(os.path.join(SESSIONS_DIR, f)),
+        reverse=True
+    )
+    if not sessions:
+        print("shellama: no saved sessions", file=sys.stderr)
+        return
+    if name:
+        matches = [s for s in sessions if name in s]
+        if not matches:
+            print(f"shellama: no session matching '{name}'", file=sys.stderr)
+            return
+        choice = matches[0]
+    else:
+        print(f"{CYAN}Saved sessions:{RESET}")
+        for i, s in enumerate(sessions[:20]):
+            path = os.path.join(SESSIONS_DIR, s)
+            try:
+                with open(path) as f:
+                    meta = _json.load(f)
+                import time as _time
+                age = _time.time() - meta.get('saved_at', 0)
+                if age < 3600:
+                    ago = f"{int(age/60)}m ago"
+                elif age < 86400:
+                    ago = f"{int(age/3600)}h ago"
+                else:
+                    ago = f"{int(age/86400)}d ago"
+                print(f"  {YELLOW}{i+1}{RESET}) {s[:-5]}  {GRAY}[{meta.get('requests',0)} reqs | {meta.get('tokens',0)} tok | {ago}]{RESET}")
+            except Exception:
+                print(f"  {YELLOW}{i+1}{RESET}) {s[:-5]}")
+        try:
+            pick = input(f"{YELLOW}Load [1-{min(len(sessions),20)}]: {RESET}").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if not pick.isdigit() or int(pick) < 1 or int(pick) > min(len(sessions), 20):
+            print("cancelled")
+            return
+        choice = sessions[int(pick) - 1]
+
+    filepath = os.path.join(SESSIONS_DIR, choice)
+    with open(filepath) as f:
+        meta = _json.load(f)
+    SESSION_CONV_ID = meta['conversation_id']
+    os.environ['SHELLAMA_CONV_ID'] = SESSION_CONV_ID
+    session_tokens = meta.get('tokens', 0)
+    session_requests = meta.get('requests', 0)
+    session_elapsed = meta.get('elapsed', 0.0)
+    print(f"{CYAN}loaded session: {choice[:-5]} ({session_requests} reqs, {session_tokens} tokens){RESET}")
+    if meta.get('cwd') and meta['cwd'] != os.getcwd():
+        print(f"{GRAY}session was in: {meta['cwd']}{RESET}", file=sys.stderr)
+
+
+def session_list():
+    """List saved sessions."""
+    import json as _json, time as _time
+    if not os.path.isdir(SESSIONS_DIR):
+        print("shellama: no saved sessions", file=sys.stderr)
+        return
+    sessions = sorted(
+        [f for f in os.listdir(SESSIONS_DIR) if f.endswith('.json')],
+        key=lambda f: os.path.getmtime(os.path.join(SESSIONS_DIR, f)),
+        reverse=True
+    )
+    if not sessions:
+        print("shellama: no saved sessions", file=sys.stderr)
+        return
+    for s in sessions:
+        try:
+            with open(os.path.join(SESSIONS_DIR, s)) as f:
+                meta = _json.load(f)
+            age = _time.time() - meta.get('saved_at', 0)
+            if age < 3600:
+                ago = f"{int(age/60)}m ago"
+            elif age < 86400:
+                ago = f"{int(age/3600)}h ago"
+            else:
+                ago = f"{int(age/86400)}d ago"
+            print(f"  {YELLOW}{s[:-5]}{RESET}  {GRAY}[{meta.get('requests',0)} reqs | {meta.get('tokens',0)} tok | {meta.get('model','')} | {ago}]{RESET}")
+        except Exception:
+            print(f"  {YELLOW}{s[:-5]}{RESET}")
+
+# Context files — attached to every prompt
+_CONTEXT_FILE = os.path.join(os.path.expanduser('~/.shellama'), 'context.json')
+
+def _load_context_paths():
+    """Load context file list from disk."""
+    import json as _json
+    try:
+        with open(_CONTEXT_FILE) as f:
+            return _json.load(f)
+    except Exception:
+        return []
+
+def _save_context_paths(paths):
+    import json as _json
+    os.makedirs(os.path.dirname(_CONTEXT_FILE), exist_ok=True)
+    with open(_CONTEXT_FILE, 'w') as f:
+        _json.dump(paths, f)
+
+def _build_context_block():
+    """Read all context files and return a block to prepend to prompts."""
+    paths = _load_context_paths()
+    if not paths:
+        return ''
+    parts = []
+    for p in paths:
+        expanded = os.path.expanduser(p)
+        if not os.path.isabs(expanded):
+            expanded = os.path.join(os.getcwd(), expanded)
+        try:
+            with open(expanded, 'r') as f:
+                content = f.read()
+            parts.append(f"--- CONTEXT FILE: {p} ---\n{content}\n--- END ---")
+        except Exception as e:
+            parts.append(f"--- CONTEXT FILE: {p} ---\n(error: {e})\n--- END ---")
+    return '\n\n'.join(parts)
+
+def context_add(path):
+    paths = _load_context_paths()
+    # Normalize: store relative if under cwd, else absolute
+    abspath = os.path.abspath(os.path.expanduser(path))
+    if not os.path.exists(abspath):
+        print(f"shellama: {path}: not found", file=sys.stderr)
+        return
+    try:
+        rel = os.path.relpath(abspath)
+        store = rel if not rel.startswith('..') else abspath
+    except ValueError:
+        store = abspath
+    if store in paths:
+        print(f"shellama: {store} already in context", file=sys.stderr)
+        return
+    paths.append(store)
+    _save_context_paths(paths)
+    print(f"{CYAN}context added: {store}{RESET}")
+
+def context_remove(path):
+    paths = _load_context_paths()
+    # Try exact match, then by basename, then by abspath
+    abspath = os.path.abspath(os.path.expanduser(path))
+    to_remove = None
+    for p in paths:
+        if p == path or os.path.abspath(os.path.expanduser(p)) == abspath:
+            to_remove = p
+            break
+    if not to_remove:
+        print(f"shellama: {path} not in context", file=sys.stderr)
+        return
+    paths.remove(to_remove)
+    _save_context_paths(paths)
+    print(f"{CYAN}context removed: {to_remove}{RESET}")
+
+def context_list():
+    paths = _load_context_paths()
+    if not paths:
+        print("shellama: no context files (use ,context add <file>)", file=sys.stderr)
+        return
+    total_size = 0
+    for p in paths:
+        expanded = os.path.expanduser(p)
+        if not os.path.isabs(expanded):
+            expanded = os.path.join(os.getcwd(), expanded)
+        try:
+            size = os.path.getsize(expanded)
+            total_size += size
+            print(f"  {YELLOW}{p}{RESET}  {GRAY}({size:,} bytes){RESET}")
+        except Exception:
+            print(f"  {YELLOW}{p}{RESET}  {GRAY}(missing){RESET}")
+    print(f"{GRAY}total: {len(paths)} files, {total_size:,} bytes injected per prompt{RESET}", file=sys.stderr)
+
+def context_clear():
+    _save_context_paths([])
+    print(f"{CYAN}context cleared{RESET}")
 
 CYAN = '\033[36m'
 YELLOW = '\033[33m'
@@ -101,29 +328,167 @@ readline.parse_and_bind('tab: complete')
 SYSTEM_PROMPT = """You are an AI assistant running inside a bash shell on {os_info}.
 Current directory: {cwd}
 
-You can run bash commands to answer the user's question. To run a command, output it in a ```bash block like this:
+You have three tools available. Use the appropriate fenced block for each:
 
+## 1. Run bash commands
 ```bash
 ls -la
 ```
 
-You will see the command output, then you can run more commands or give your final answer.
+## 2. Read files
+```file_read
+path/to/file.py
+```
+You can read multiple files by listing one path per line.
+
+## 3. Write files
+```file_write path/to/file.py
+content goes here
+exactly as it should appear in the file
+```
+
+You will see the output of each tool, then you can use more tools or give your final answer.
 
 IMPORTANT:
-- Always run commands yourself, never ask the user to run them
-- You MUST use ```bash blocks to run commands
-- ONLY use ```bash blocks for commands you want executed — NEVER for code examples
-- For code examples in other languages, use the appropriate language tag (```python, ```julia, etc.) or no tag
-- When you have enough info, give your final answer as plain text with no ```bash blocks
+- Always use tools yourself, never ask the user to do it
+- Use ```file_read instead of cat — it's safer and shows line numbers
+- Use ```file_write instead of echo/tee/heredoc — it handles special characters correctly
+- Use ```bash for everything else (installs, git, running programs, etc.)
+- ONLY use these three block types for actions you want executed
+- For code examples, use other language tags (```python, ```julia, etc.) or no tag
+- When you have enough info, give your final answer as plain text with no tool blocks
 - Keep commands short and focused
 - If a command fails, try a different approach
-- Never run destructive commands (rm -rf, mkfs, etc.) without the user explicitly asking"""
+- Never run destructive commands (rm -rf, mkfs, etc.) without the user explicitly asking
+- Prefer file_write over bash for creating/editing files — it's atomic and won't corrupt on special chars"""
+
+
+def extract_tool_blocks(text):
+    """Extract all tool blocks (bash, file_read, file_write) from AI response."""
+    blocks = []
+    for m in re.finditer(r'```(bash|file_read|file_write(?:\s+\S+)?)\n(.*?)```', text, re.DOTALL):
+        tag = m.group(1)
+        content = m.group(2).strip()
+        if not content:
+            continue
+        if tag == 'bash':
+            blocks.append(('bash', content))
+        elif tag == 'file_read':
+            for line in content.splitlines():
+                p = line.strip()
+                if p:
+                    blocks.append(('file_read', p))
+        else:
+            # file_write path/to/file
+            path = tag.split(None, 1)[1] if ' ' in tag else ''
+            blocks.append(('file_write', (path, m.group(2))))  # preserve original content (no strip)
+    return blocks
 
 
 def extract_bash_blocks(text):
-    """Extract bash code blocks from AI response."""
+    """Extract bash code blocks from AI response (legacy, used by non-agent callers)."""
     blocks = re.findall(r'```bash\n(.*?)```', text, re.DOTALL)
     return [b.strip() for b in blocks if b.strip()]
+
+
+def run_file_read(path):
+    """Read a file and return numbered lines."""
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(os.getcwd(), path)
+    try:
+        with open(path, 'r') as f:
+            lines = f.readlines()
+        numbered = ''.join(f"{i+1:4d} | {line}" for i, line in enumerate(lines))
+        return numbered if numbered else "(empty file)"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def run_file_write(path, content):
+    """Write content to a file, creating directories as needed."""
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(os.getcwd(), path)
+    try:
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        with open(path, 'w') as f:
+            f.write(content)
+        lines = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+        return f"Wrote {lines} lines to {path}"
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# Permission tiers for bash commands
+_READONLY_PATTERNS = [
+    r'^(ls|ll|la|dir)(\s|$)', r'^cat\s', r'^head\s', r'^tail\s', r'^less\s', r'^more\s',
+    r'^grep\s', r'^egrep\s', r'^fgrep\s', r'^rg\s', r'^ag\s',
+    r'^find\s', r'^locate\s', r'^which\s', r'^whereis\s', r'^type\s',
+    r'^wc\s', r'^du\s', r'^df\s', r'^stat\s', r'^file\s',
+    r'^pwd$', r'^whoami$', r'^id$', r'^uname', r'^hostname$', r'^date$', r'^uptime$',
+    r'^env$', r'^printenv', r'^echo\s', r'^printf\s',
+    r'^git\s+(status|log|diff|show|branch|tag|remote|stash list)',
+    r'^git\s+ls-', r'^git\s+rev-parse',
+    r'^python3?\s+--version', r'^node\s+--version', r'^npm\s+--version',
+    r'^cargo\s+--version', r'^rustc\s+--version', r'^go\s+version',
+    r'^docker\s+(ps|images|inspect|logs)', r'^kubectl\s+(get|describe|logs)',
+    r'^systemctl\s+status', r'^journalctl',
+    r'^curl\s', r'^wget\s.*-O\s*-', r'^ping\s', r'^dig\s', r'^nslookup\s',
+    r'^ps\s', r'^top\s+-bn1', r'^htop', r'^free\s', r'^lscpu', r'^lsblk',
+    r'^test\s', r'^\[', r'^true$', r'^false$',
+]
+
+_BLOCKED_PATTERNS = [
+    r'rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--force\s+).*(/|~|\*|\$HOME)',  # rm -rf / or ~
+    r'rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(/|~|\$HOME)$',  # rm -r /
+    r'mkfs', r'fdisk', r'parted', r'dd\s+.*of=.*/dev/',
+    r':(){ :\|:& };:',  # fork bomb
+    r'>\s*/dev/sd', r'>\s*/dev/nvme',
+    r'chmod\s+-R\s+777\s+/',
+    r'git\s+push\s+.*--force', r'git\s+push\s+-f\b',
+    r'git\s+reset\s+--hard',
+    r'git\s+clean\s+-[a-zA-Z]*f',
+    r'shutdown', r'reboot', r'init\s+[06]', r'poweroff',
+    r'curl\s.*\|\s*(sudo\s+)?bash', r'wget\s.*\|\s*(sudo\s+)?bash',  # pipe to bash
+]
+
+# Try to fetch permissions from server (non-blocking, fallback to defaults)
+def _fetch_permissions():
+    global _READONLY_PATTERNS, _BLOCKED_PATTERNS, _READONLY_RE, _BLOCKED_RE
+    try:
+        resp = _session.get(f"{API_URL}/api/permissions", timeout=2)
+        data = resp.json()
+        _READONLY_PATTERNS = data.get('allowed', _READONLY_PATTERNS)
+        extra_blocked = data.get('blocked_custom', [])
+        _BLOCKED_PATTERNS = data.get('blocked_immutable', _BLOCKED_PATTERNS) + extra_blocked
+    except Exception:
+        pass  # Use defaults
+    _READONLY_RE = [re.compile(p) for p in _READONLY_PATTERNS]
+    _BLOCKED_RE = [re.compile(p) for p in _BLOCKED_PATTERNS]
+
+_fetch_permissions()
+
+
+RED = '\033[31m'
+
+def _classify_command(cmd):
+    """Classify a bash command: 'allow', 'prompt', or 'block'."""
+    stripped = cmd.strip()
+    # Check blocked first
+    for pat in _BLOCKED_RE:
+        if pat.search(stripped):
+            return 'block'
+    # Check read-only
+    for pat in _READONLY_RE:
+        if pat.match(stripped):
+            return 'allow'
+    # Piped commands: if first command is readonly and rest are readonly/filters, allow
+    if '|' in stripped:
+        parts = [p.strip() for p in stripped.split('|')]
+        if all(_classify_command(p) == 'allow' for p in parts):
+            return 'allow'
+    return 'prompt'
 
 
 def run_command(cmd):
@@ -236,11 +601,49 @@ def ai_chat(message, model):
         return None, 0, 0, str(e)
 
 
+# Auto-compaction threshold (~6000 tokens ≈ 24000 chars)
+COMPACT_THRESHOLD = int(os.environ.get('SHELLAMA_COMPACT_THRESHOLD', '24000'))
+
+def _auto_compact(conversation, system_prompt, quiet=False):
+    """If conversation exceeds threshold, summarize older turns keeping recent ones."""
+    if len(conversation) < COMPACT_THRESHOLD:
+        return conversation
+
+    # Split into system + turns
+    # Keep system prompt and last 2 exchanges intact, summarize the middle
+    after_system = conversation[len(system_prompt):]
+    # Split on "User:" and "Assistant:" boundaries
+    turns = re.split(r'\n\n(?=User:|Assistant:|Tool output:|Command output:)', after_system)
+
+    if len(turns) <= 4:
+        # Not enough turns to compact
+        return conversation
+
+    # Keep last 4 chunks (roughly last 2 exchanges), summarize the rest
+    to_summarize = '\n\n'.join(turns[:-4])
+    to_keep = '\n\n'.join(turns[-4:])
+
+    # Ask the LLM to summarize
+    summary_prompt = f"Summarize this conversation history concisely. Keep key facts, decisions made, files modified, and current task state. Be brief:\n\n{to_summarize}"
+    summary, _, _, err = ai_chat(summary_prompt, MODEL)
+
+    if err or not summary:
+        return conversation  # Failed to compact, continue as-is
+
+    if not quiet:
+        print(f"{GRAY}[compacted: {len(conversation)} → {len(system_prompt) + len(summary) + len(to_keep) + 50} chars]{RESET}", file=sys.stderr)
+
+    return f"{system_prompt}\n\nConversation summary (earlier turns):\n{summary}\n\n{to_keep}"
+
+
 def ai_agent(query, quiet=False):
     """Agentic loop: AI can run commands and iterate."""
     global last_output
     os_info = subprocess.run(['uname', '-sr'], capture_output=True, text=True).stdout.strip()
     system = SYSTEM_PROMPT.format(os_info=os_info, cwd=os.getcwd())
+    ctx = _build_context_block()
+    if ctx:
+        system += f"\n\nThe user has attached these files as context:\n\n{ctx}"
     conversation = f"{system}\n\nUser: {query}"
 
     total_tokens = 0
@@ -259,11 +662,12 @@ def ai_agent(query, quiet=False):
         total_tokens += tokens
         total_elapsed += elapsed
 
-        commands = extract_bash_blocks(response)
+        tool_blocks = extract_tool_blocks(response)
 
-        if not commands:
+        if not tool_blocks:
             # Final answer — always show, even in quiet mode
             last_output = response
+            _persist_last_output()
             if quiet:
                 print(response)
             else:
@@ -272,47 +676,113 @@ def ai_agent(query, quiet=False):
             return
 
         if not quiet:
-            # Show reasoning text between commands
-            text_parts = re.split(r'```bash\n.*?```', response, flags=re.DOTALL)
+            # Show reasoning text between tool blocks
+            text_parts = re.split(r'```(?:bash|file_read|file_write\s*\S*)\n.*?```', response, flags=re.DOTALL)
             for part in text_parts:
                 part = part.strip()
                 if part:
                     print(f"{CYAN}{part}{RESET}")
             print(f"{GRAY}[round {round_num + 1} | {elapsed:.1f}s | {tokens} tokens]{RESET}", file=sys.stderr)
 
-        # Execute each command and collect output
+        # Execute each tool and collect output
         cmd_outputs = []
-        for cmd in commands:
+        for tool_type, tool_data in tool_blocks:
             sys.stderr.write("\n")
-            print(f"{YELLOW}┌─ $ {cmd}{RESET}")
-            if not quiet:
-                try:
-                    import termios
-                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
-                except Exception:
+
+            if tool_type == 'file_read':
+                print(f"{YELLOW}┌─ 📖 read: {tool_data}{RESET}")
+                if not quiet:
+                    # Auto-allow reads
                     pass
-                try:
-                    answer = input(f"{YELLOW}└─ Run? [y/N/q] {RESET}").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    return
-                if answer == 'q':
-                    return
-                if answer != 'y':
-                    cmd_outputs.append(f"$ {cmd}\n(skipped by user)")
-                    print(f"{GRAY}   (skipped){RESET}")
+                output = run_file_read(tool_data)
+                if not quiet:
+                    # Show truncated preview
+                    lines = output.splitlines()
+                    if len(lines) > 20:
+                        preview = '\n'.join(lines[:10])
+                        print(f"{DIM}{preview}\n   ... ({len(lines)} lines total) ...{RESET}")
+                    else:
+                        print(f"{DIM}{output}{RESET}")
+                cmd_outputs.append(f"[read {tool_data}]\n{output}")
+
+            elif tool_type == 'file_write':
+                path, content = tool_data
+                line_count = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+                print(f"{YELLOW}┌─ ✏️  write: {path} ({line_count} lines){RESET}")
+                if not quiet:
+                    # Show preview of what will be written
+                    preview_lines = content.splitlines()[:5]
+                    for pl in preview_lines:
+                        print(f"{DIM}  {pl}{RESET}")
+                    if len(content.splitlines()) > 5:
+                        print(f"{DIM}  ... ({len(content.splitlines())} lines total){RESET}")
+                    try:
+                        import termios
+                        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                    except Exception:
+                        pass
+                    try:
+                        answer = input(f"{YELLOW}└─ Write? [y/N/q] {RESET}").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        print()
+                        return
+                    if answer == 'q':
+                        return
+                    if answer != 'y':
+                        cmd_outputs.append(f"[write {path}]\n(skipped by user)")
+                        print(f"{GRAY}   (skipped){RESET}")
+                        continue
+                output = run_file_write(path, content)
+                print(f"{DIM}{output}{RESET}")
+                cmd_outputs.append(f"[write {path}]\n{output}")
+
+            else:  # bash
+                cmd = tool_data
+                perm = _classify_command(cmd)
+
+                if perm == 'block':
+                    print(f"{RED}┌─ ⛔ BLOCKED: {cmd}{RESET}")
+                    print(f"{RED}└─ This command is destructive and was blocked.{RESET}")
+                    cmd_outputs.append(f"$ {cmd}\n(BLOCKED: destructive command not allowed)")
                     continue
-            output = run_command(cmd)
-            if output:
-                if quiet:
-                    print(output)
+
+                if perm == 'allow':
+                    print(f"{YELLOW}┌─ $ {cmd}{RESET}")
+                    # Auto-allowed (read-only)
                 else:
-                    print(f"{DIM}{output}{RESET}")
-            cmd_outputs.append(f"$ {cmd}\n{output}")
+                    print(f"{YELLOW}┌─ $ {cmd}{RESET}")
+                    if not quiet:
+                        try:
+                            import termios
+                            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                        except Exception:
+                            pass
+                        try:
+                            answer = input(f"{YELLOW}└─ Run? [y/N/q] {RESET}").strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            print()
+                            return
+                        if answer == 'q':
+                            return
+                        if answer != 'y':
+                            cmd_outputs.append(f"$ {cmd}\n(skipped by user)")
+                            print(f"{GRAY}   (skipped){RESET}")
+                            continue
+
+                output = run_command(cmd)
+                if output:
+                    if quiet:
+                        print(output)
+                    else:
+                        print(f"{DIM}{output}{RESET}")
+                cmd_outputs.append(f"$ {cmd}\n{output}")
 
         # Feed results back
         results = '\n\n'.join(cmd_outputs)
-        conversation += f"\n\nAssistant: {response}\n\nCommand output:\n{results}\n\nContinue. If you have enough information, give your final answer without any ```bash blocks."
+        conversation += f"\n\nAssistant: {response}\n\nTool output:\n{results}\n\nContinue. If you have enough information, give your final answer as plain text without any tool blocks (no ```bash, ```file_read, or ```file_write)."
+
+        # Auto-compact: if conversation is getting long, summarize older turns
+        conversation = _auto_compact(conversation, system, quiet)
 
     print(f"{GRAY}[max rounds reached | {total_elapsed:.1f}s | {total_tokens} tokens]{RESET}", file=sys.stderr)
 
@@ -362,6 +832,7 @@ def ai_simple(endpoint, payload, result_key):
         session_elapsed += data.get('elapsed', 0)
         result = data.get(result_key, '')
         last_output = result
+        _persist_last_output()
         if data.get('cloud_fallback'):
             print(f"{CYAN}{result}{RESET}")
             print(f"{GRAY}[{data.get('elapsed', 0):.1f}s | {data.get('total_tokens', 0)} tokens | {data.get('cloud_model', 'cloud')} (fallback)]{RESET}", file=sys.stderr)
@@ -480,6 +951,9 @@ def read_file_arg(arg):
 
 def ai_save(filename):
     """Save last AI output to a file. Strips markdown code fences if the entire output is a single fenced block."""
+    global last_output
+    if not last_output:
+        last_output = _load_last_output()
     if not last_output:
         print("shellama: nothing to save (no AI output yet)", file=sys.stderr)
         return
@@ -505,6 +979,8 @@ SERVICES = {
     'chat':     ('Chat with AI (default)',),
     'test':     ('Benchmark models — compare speed, tokens, and cost',),
     'save':     ('Save last AI output to a file',),
+    'session':  ('Save/load/list conversation sessions',),
+    'context':  ('Manage context files attached to every prompt',),
 }
 
 
@@ -779,6 +1255,27 @@ def main():
                 print(f"{CYAN}Session usage: {session_requests} requests | {session_tokens} tokens | {session_elapsed:.1f}s{RESET}")
             elif query.startswith('save '):
                 ai_save(query[5:].strip())
+            elif query == 'session' or query.startswith('session '):
+                sub = query[8:].strip() if len(query) > 7 else ''
+                if sub.startswith('save'):
+                    session_save(sub[5:].strip())
+                elif sub.startswith('load'):
+                    session_load(sub[5:].strip())
+                elif sub == 'list' or sub == '':
+                    session_list()
+                else:
+                    print(f"Usage: ,session save [name] | ,session load [name] | ,session list")
+            elif query == 'context' or query.startswith('context '):
+                sub = query[8:].strip() if len(query) > 7 else ''
+                if sub.startswith('add '):
+                    context_add(sub[4:].strip())
+                elif sub.startswith('remove ') or sub.startswith('rm '):
+                    arg = sub.split(None, 1)[1] if ' ' in sub else ''
+                    context_remove(arg)
+                elif sub == 'clear':
+                    context_clear()
+                else:
+                    context_list()
             elif query == 'test' or query.startswith('test '):
                 ai_test(query[5:].strip() or None)
             elif query.startswith('img '):
@@ -850,6 +1347,28 @@ if __name__ == '__main__':
             select_model()
         elif cmd == 'save':
             ai_save(args)
+        elif cmd == 'session':
+            parts = args.split(None, 1)
+            sub = parts[0] if parts else 'list'
+            sub_arg = parts[1] if len(parts) > 1 else ''
+            if sub == 'save':
+                session_save(sub_arg)
+            elif sub == 'load':
+                session_load(sub_arg)
+            else:
+                session_list()
+        elif cmd == 'context':
+            parts = args.split(None, 1)
+            sub = parts[0] if parts else ''
+            sub_arg = parts[1] if len(parts) > 1 else ''
+            if sub == 'add' and sub_arg:
+                context_add(sub_arg)
+            elif sub in ('remove', 'rm') and sub_arg:
+                context_remove(sub_arg)
+            elif sub == 'clear':
+                context_clear()
+            else:
+                context_list()
         elif cmd == 'tokens':
             try:
                 since = os.environ.get('SHELLAMA_SESSION_START', '0')

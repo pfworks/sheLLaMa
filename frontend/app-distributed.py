@@ -107,7 +107,7 @@ def periodic_save():
 load_history()
 Thread(target=periodic_save, daemon=True).start()
 
-def record_ip_tokens(ip, tokens, task_type='unknown', prompt_tokens=0, response_tokens=0, cloud_fallback=False, key_name='anonymous', cached=False):
+def record_ip_tokens(ip, tokens, task_type='unknown', prompt_tokens=0, response_tokens=0, cloud_fallback=False, key_name='anonymous', cached=False, cloud_model=''):
     """Record token usage for a client IP and task type"""
     with ip_token_lock:
         # Always update cumulative by_client and by_task
@@ -145,9 +145,14 @@ def record_ip_tokens(ip, tokens, task_type='unknown', prompt_tokens=0, response_
         if tokens > 0 or cached:
             if ip not in ip_token_history:
                 ip_token_history[ip] = []
-            ip_token_history[ip].append({'timestamp': time.time(), 'tokens': tokens, 'task': task_type,
-                                          'prompt_tokens': prompt_tokens, 'response_tokens': response_tokens,
-                                          'cloud_fallback': cloud_fallback, 'cached': cached})
+            entry = {'timestamp': time.time(), 'tokens': tokens, 'task': task_type,
+                     'prompt_tokens': prompt_tokens, 'response_tokens': response_tokens,
+                     'cloud_fallback': cloud_fallback, 'cached': cached}
+            if cloud_fallback and cloud_model:
+                entry['cloud_model'] = cloud_model
+            if key_name != 'anonymous':
+                entry['key_name'] = key_name
+            ip_token_history[ip].append(entry)
             if len(ip_token_history[ip]) > IP_HISTORY_MAX:
                 ip_token_history[ip] = ip_token_history[ip][-IP_HISTORY_MAX:]
 
@@ -567,7 +572,8 @@ def proxy_request(endpoint, data, client_ip=None, task_type='unknown'):
                                prompt_tokens=result.get('prompt_tokens', 0),
                                response_tokens=result.get('response_tokens', 0),
                                cloud_fallback=result.get('cloud_fallback', False),
-                               key_name=get_key_name())
+                               key_name=get_key_name(),
+                               cloud_model=result.get('cloud_model', ''))
             # Record tokens for rate limiting
             rate_key = getattr(request, '_shellama_key', None)
             if rate_key:
@@ -665,6 +671,11 @@ def stats_page():
 @require_sso
 def costs_page():
     return send_from_directory('/export/html', 'costs.html')
+
+@app.route('/cloud-usage')
+@require_sso
+def cloud_usage_page():
+    return send_from_directory('/export/html', 'cloud-usage.html')
 
 @app.route('/settings')
 @require_sso
@@ -1198,6 +1209,75 @@ def cloud_costs_tab():
         },
     })
 
+@app.route('/cloud-usage-data')
+def cloud_usage_data():
+    """Cloud fallback usage aggregated by IP and API key, with cost estimates."""
+    _proj = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+    if _proj not in sys.path:
+        sys.path.insert(0, _proj)
+    from shared.constants import cloud_cost_estimates
+
+    with ip_token_lock:
+        by_ip = {}
+        by_key = {}
+        by_model = {}
+        for ip, entries in ip_token_history.items():
+            for e in entries:
+                if e.get('task') == 'test':
+                    continue
+                pt = e.get('prompt_tokens', 0)
+                rt = e.get('response_tokens', 0)
+                ts = e.get('timestamp', 0)
+                is_fallback = e.get('cloud_fallback', False)
+                model = e.get('cloud_model', '') if is_fallback else ''
+                kn = e.get('key_name', 'anonymous')
+                # By IP (all usage for cost projection)
+                if ip not in by_ip:
+                    by_ip[ip] = {'requests': 0, 'prompt_tokens': 0, 'response_tokens': 0,
+                                 'fallback_requests': 0, 'models': {}, 'last_used': 0}
+                by_ip[ip]['requests'] += 1
+                by_ip[ip]['prompt_tokens'] += pt
+                by_ip[ip]['response_tokens'] += rt
+                if is_fallback:
+                    by_ip[ip]['fallback_requests'] += 1
+                    if model:
+                        by_ip[ip]['models'][model] = by_ip[ip]['models'].get(model, 0) + 1
+                if ts > by_ip[ip]['last_used']:
+                    by_ip[ip]['last_used'] = ts
+                # By key (all usage for cost projection)
+                if kn not in by_key:
+                    by_key[kn] = {'requests': 0, 'prompt_tokens': 0, 'response_tokens': 0,
+                                  'fallback_requests': 0, 'models': {}, 'last_used': 0}
+                by_key[kn]['requests'] += 1
+                by_key[kn]['prompt_tokens'] += pt
+                by_key[kn]['response_tokens'] += rt
+                if is_fallback:
+                    by_key[kn]['fallback_requests'] += 1
+                    if model:
+                        by_key[kn]['models'][model] = by_key[kn]['models'].get(model, 0) + 1
+                if ts > by_key[kn]['last_used']:
+                    by_key[kn]['last_used'] = ts
+                # By model (fallback only)
+                if is_fallback:
+                    m = model or 'unknown'
+                    if m not in by_model:
+                        by_model[m] = {'requests': 0, 'prompt_tokens': 0, 'response_tokens': 0}
+                    by_model[m]['requests'] += 1
+                    by_model[m]['prompt_tokens'] += pt
+                    by_model[m]['response_tokens'] += rt
+
+    # Add cost estimates per IP and per key
+    for d in list(by_ip.values()) + list(by_key.values()) + list(by_model.values()):
+        costs, source = cloud_cost_estimates(d['prompt_tokens'], d['response_tokens'])
+        # Include just the cheapest and most expensive for summary, full list for detail
+        if costs:
+            sorted_costs = sorted(costs, key=lambda c: c['total_cost'])
+            d['cheapest'] = sorted_costs[0]
+            d['costliest'] = sorted_costs[-1]
+            d['cloud_costs'] = sorted_costs
+
+    return jsonify({'by_ip': by_ip, 'by_key': by_key, 'by_model': by_model, 'pricing_source': source})
+
 @app.route('/enterprise-costs')
 def enterprise_costs_tab():
     """Enterprise subscription cost comparison based on actual usage."""
@@ -1392,6 +1472,88 @@ def api_audit_status():
         'audit_enabled': bool(AUDIT_LOG) or persisted_totals.get('audit_enabled', False),
         'file_log': AUDIT_LOG or None,
         'entries_in_memory': len(_audit_entries),
+    })
+
+# Hardcoded blocked patterns — cannot be removed via API
+_IMMUTABLE_BLOCKED = [
+    r'rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--force\s+).*(/|~|\*|\$HOME)',
+    r'rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(/|~|\$HOME)$',
+    r'mkfs', r'fdisk', r'parted', r'dd\s+.*of=.*/dev/',
+    r':(){ :\|:& };:',
+    r'>\s*/dev/sd', r'>\s*/dev/nvme',
+    r'chmod\s+-R\s+777\s+/',
+    r'git\s+push\s+.*--force', r'git\s+push\s+-f\b',
+    r'git\s+reset\s+--hard',
+    r'git\s+clean\s+-[a-zA-Z]*f',
+    r'shutdown', r'reboot', r'init\s+[06]', r'poweroff',
+    r'curl\s.*\|\s*(sudo\s+)?bash', r'wget\s.*\|\s*(sudo\s+)?bash',
+]
+
+_DEFAULT_ALLOWED = [
+    r'^(ls|ll|la|dir)(\s|$)', r'^cat\s', r'^head\s', r'^tail\s', r'^less\s', r'^more\s',
+    r'^grep\s', r'^egrep\s', r'^fgrep\s', r'^rg\s', r'^ag\s',
+    r'^find\s', r'^locate\s', r'^which\s', r'^whereis\s', r'^type\s',
+    r'^wc\s', r'^du\s', r'^df\s', r'^stat\s', r'^file\s',
+    r'^pwd$', r'^whoami$', r'^id$', r'^uname', r'^hostname$', r'^date$', r'^uptime$',
+    r'^env$', r'^printenv', r'^echo\s', r'^printf\s',
+    r'^git\s+(status|log|diff|show|branch|tag|remote|stash list)',
+    r'^git\s+ls-', r'^git\s+rev-parse',
+    r'^python3?\s+--version', r'^node\s+--version', r'^npm\s+--version',
+    r'^cargo\s+--version', r'^rustc\s+--version', r'^go\s+version',
+    r'^docker\s+(ps|images|inspect|logs)', r'^kubectl\s+(get|describe|logs)',
+    r'^systemctl\s+status', r'^journalctl',
+    r'^curl\s', r'^wget\s.*-O\s*-', r'^ping\s', r'^dig\s', r'^nslookup\s',
+    r'^ps\s', r'^top\s+-bn1', r'^htop', r'^free\s', r'^lscpu', r'^lsblk',
+    r'^test\s', r'^\[', r'^true$', r'^false$',
+]
+
+@app.route('/api/permissions', methods=['GET', 'POST'])
+@require_admin
+def api_permissions():
+    """Get or update command permission patterns."""
+    if request.method == 'POST':
+        data = request.json or {}
+        with ip_token_lock:
+            if 'allowed' in data:
+                # Replace the editable allow list
+                persisted_totals['cmd_allowed'] = data['allowed']
+            elif 'add_allowed' in data:
+                allowed = persisted_totals.get('cmd_allowed', list(_DEFAULT_ALLOWED))
+                pat = data['add_allowed']
+                if pat not in allowed:
+                    allowed.append(pat)
+                persisted_totals['cmd_allowed'] = allowed
+            elif 'remove_allowed' in data:
+                allowed = persisted_totals.get('cmd_allowed', list(_DEFAULT_ALLOWED))
+                pat = data['remove_allowed']
+                if pat in allowed:
+                    allowed.remove(pat)
+                persisted_totals['cmd_allowed'] = allowed
+            if 'add_blocked' in data:
+                # Can add extra blocked patterns
+                extra = persisted_totals.get('cmd_blocked_extra', [])
+                pat = data['add_blocked']
+                if pat not in extra and pat not in _IMMUTABLE_BLOCKED:
+                    extra.append(pat)
+                persisted_totals['cmd_blocked_extra'] = extra
+            elif 'remove_blocked' in data:
+                # Can only remove user-added blocked, not immutable
+                pat = data['remove_blocked']
+                if pat in _IMMUTABLE_BLOCKED:
+                    return jsonify({'error': 'Cannot remove built-in safety rule'}), 403
+                extra = persisted_totals.get('cmd_blocked_extra', [])
+                if pat in extra:
+                    extra.remove(pat)
+                persisted_totals['cmd_blocked_extra'] = extra
+        save_history()
+
+    with ip_token_lock:
+        allowed = persisted_totals.get('cmd_allowed', _DEFAULT_ALLOWED)
+        extra_blocked = persisted_totals.get('cmd_blocked_extra', [])
+    return jsonify({
+        'allowed': allowed,
+        'blocked_immutable': _IMMUTABLE_BLOCKED,
+        'blocked_custom': extra_blocked,
     })
 
 @app.route('/api/keys', methods=['GET'])

@@ -1,6 +1,6 @@
 # sheLLaMa - Session Summary
 
-Last updated: May 21, 2026
+Last updated: May 28, 2026
 
 ## Project Overview
 
@@ -31,7 +31,9 @@ shellama/
 │       ├── status.html        # Admin: status summary + cloud cost tab
 │       ├── backends.html      # Admin: backend details
 │       ├── stats.html         # Admin: charts and graphs
-│       └── costs.html         # Admin: cloud cost tracking
+│       ├── costs.html         # Admin: cloud cost tracking
+│       ├── cloud-usage.html   # Admin: cloud backend usage by IP/key
+│       └── settings.html      # Admin: permissions, aliases, webhooks
 ├── deploy/                     # Ansible deployment
 │   ├── deploy.yml             # Backend playbook
 │   ├── deploy-frontend.yml    # Frontend playbook
@@ -84,6 +86,14 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | `,generate <desc>` | `/generate` or `/generate-code` | Keywords `ansible\|playbook\|shell command`→playbook, else→code |
 | `,analyze <paths>` | `/analyze` | Files and/or directories, recursive |
 | `,img <prompt>` | `/generate-image` | Text-to-image (Stable Diffusion) |
+| `,save <file>` | — | Save last AI output to a file (strips markdown fences) |
+| `,session save [name]` | — | Save conversation session to `~/.shellama/sessions/` |
+| `,session load [name]` | — | Load a saved session (interactive picker or by name) |
+| `,session list` | — | List saved sessions |
+| `,context add <file>` | — | Attach file to every prompt as context |
+| `,context remove <file>` | — | Remove file from context |
+| `,context list` | — | Show attached context files |
+| `,context clear` | — | Remove all context files |
 | `,models` | `/models` | List and select model |
 | `,test [model\|all] [--prompt "..."]` | `/test` | Benchmark models — speed, tokens, cloud cost estimate |
 | `,tokens` | — | Show session usage stats (CLI only) |
@@ -126,6 +136,7 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | `/auto-fallback` | GET/POST | Toggle auto cloud fallback (admin) |
 | `/api/backends` | GET/POST | Get/update backend config — tasks, weight, max_model (admin) |
 | `/api/model-aliases` | GET/POST | Get/set model aliases (admin) |
+| `/api/permissions` | GET/POST | Get/update command permission patterns (allow/block lists) |
 
 ### Cost & Stats
 
@@ -137,6 +148,7 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | `/ip-tokens` | GET | Token history per client IP and backend |
 | `/queue-history` | GET | Queue size history for graphs |
 | `/usage-stats` | GET | Usage by client, task type, and API key |
+| `/cloud-usage-data` | GET | Cloud fallback usage by IP, API key, and model with cost estimates |
 | `/reset-stats` | POST | Clear request/token counters (admin) |
 | `/reset-cloud-costs` | POST | Clear cost data (admin) |
 | `/reset-all` | POST | Clear everything (admin) |
@@ -157,6 +169,16 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | `/api/webhooks` | GET/POST | Manage webhook URLs (admin) |
 
 ## Key Features
+
+### Agentic Shell (Kiro-style)
+- **Structured file tools**: AI uses `file_read`, `file_write`, and `bash`/`powershell` blocks instead of raw shell commands for file operations
+- **Permission tiers**: read-only commands (ls, cat, grep, git status) auto-run; destructive commands (rm -rf, mkfs, git push --force) are blocked; everything else prompts
+- **Permission management**: editable allow list via `/api/permissions` API and Settings page; immutable block list cannot be modified
+- **Context files**: `~/.shellama/context.json` stores list of files injected into every prompt; managed via `,context add/remove/clear/list`
+- **Conversation save/load**: sessions stored in `~/.shellama/sessions/` as JSON (conversation_id, model, tokens, cwd); `,session save/load/list`
+- **Auto-compaction**: when conversation exceeds 24,000 chars (~6K tokens), older turns are summarized by the LLM; keeps system prompt + last 2 exchanges intact
+- **CLI fetches permissions from server** on startup (2s timeout, falls back to hardcoded defaults)
+- All features work in both bash and PowerShell clients
 
 ### Image Generation (Persistent Worker Subprocess)
 - Runs Stable Diffusion in a **persistent subprocess** — model loads once, stays in memory across requests
@@ -272,6 +294,7 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | `SHELLAMA_CERT_DIR` | `/etc/shellama/pki` | PKI directory |
 | `AI_IMAGE_MODEL` | `sdxl-turbo` | Image generation model (CLI default; `sd-turbo` recommended for speed) |
 | `SHELLAMA_TASK_TIMEOUT` | `1800` | Max task runtime in seconds (backend, 0 = no limit) |
+| `SHELLAMA_COMPACT_THRESHOLD` | `24000` | Auto-compact conversation at this char count (~6K tokens) |
 | `AI_PS1` | (bash PS1) | Custom prompt (bash CLI only) |
 | `AI_QUIET` | `false` | Start in quiet mode |
 | `OPENROUTER_API_KEY` | *(empty)* | Cloud fallback API key |
