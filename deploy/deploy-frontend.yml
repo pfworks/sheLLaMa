@@ -119,6 +119,13 @@
         owner: "{{ app_user }}"
         mode: '0644'
 
+    - name: Copy cloud-usage.html
+      copy:
+        src: ../frontend/web/cloud-usage.html
+        dest: "{{ html_path }}/cloud-usage.html"
+        owner: "{{ app_user }}"
+        mode: '0644'
+
     - name: Copy settings.html
       copy:
         src: ../frontend/web/settings.html
