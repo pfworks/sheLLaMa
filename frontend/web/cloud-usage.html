@@ -89,9 +89,16 @@
             html += '</table></div></td>';
             return html;
         }
+        let paused = false;
         function toggleDetail(id) {
             const el = document.getElementById('detail-' + id);
-            el.style.display = el.style.display === 'block' ? 'none' : 'block';
+            if (el.style.display === 'block') {
+                el.style.display = 'none';
+                paused = false;
+            } else {
+                el.style.display = 'block';
+                paused = true;
+            }
         }
         let counter = 0;
         function renderTable(data, showModels, prefix) {
@@ -115,6 +122,7 @@
             return html;
         }
         function update() {
+            if (paused) return;
             counter = 0;
             fetch('/cloud-usage-data').then(r => r.json()).then(data => {
                 document.getElementById('model-section').innerHTML = renderTable(data.by_model, false, 'm');
