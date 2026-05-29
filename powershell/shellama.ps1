@@ -57,10 +57,12 @@ function Invoke-ShellamaAgent {
 
         # Extract tool blocks
         $toolBlocks = @()
-        foreach ($m in [regex]::Matches($response, '```(powershell|file_read|file_write\s*\S*)\n(.*?)```', 'Singleline')) {
+        foreach ($m in [regex]::Matches($response, '```(powershell|file_read|file_write\s*\S*|file_edit\s*\S*|web_search)\n(.*?)```', 'Singleline')) {
             $tag = $m.Groups[1].Value; $content = $m.Groups[2].Value
             if ($tag -eq 'powershell') { $toolBlocks += @{type='ps'; data=$content.Trim()} }
             elseif ($tag -eq 'file_read') { foreach ($l in $content.Trim().Split("`n")) { $p=$l.Trim(); if($p){$toolBlocks += @{type='read';data=$p}} } }
+            elseif ($tag -match '^file_edit') { $path=if($tag -match 'file_edit\s+(.+)'){$Matches[1]}else{''}; $toolBlocks += @{type='edit';data=@($path,$content)} }
+            elseif ($tag -eq 'web_search') { $toolBlocks += @{type='search';data=$content.Trim()} }
             else { $path = if($tag -match 'file_write\s+(.+)'){$Matches[1]}else{''}; $toolBlocks += @{type='write';data=@($path,$content)} }
         }
 
@@ -74,14 +76,20 @@ function Invoke-ShellamaAgent {
         }
 
         if (-not $Quiet) {
-            $parts = [regex]::Split($response, '```(?:powershell|file_read|file_write\s*\S*)\n.*?```', 'Singleline')
+            $parts = [regex]::Split($response, '```(?:powershell|file_read|file_write\s*\S*|file_edit\s*\S*|web_search)\n.*?```', 'Singleline')
             foreach ($part in $parts) { $part = $part.Trim(); if ($part) { Write-Host $part -ForegroundColor Cyan } }
             Write-Host "[round $($round + 1) | $([math]::Round($elapsed,1))s | $tokens tokens]" -ForegroundColor DarkGray
         }
 
         $cmdOutputs = @()
         foreach ($block in $toolBlocks) {
-            if ($block.type -eq 'read') {
+            if ($block.type -eq 'search') {
+                Write-Host "┌─ 🔍 search: $($block.data)" -ForegroundColor Yellow
+                try { $q=[uri]::EscapeDataString($block.data); $html=Invoke-WebRequest -Uri "https://html.duckduckgo.com/html/?q=$q" -UserAgent 'Mozilla/5.0' -TimeoutSec 10 -UseBasicParsing; $ms=[regex]::Matches($html.Content,'class="result__a"[^>]*>(.*?)</a>'); $out=($ms|Select-Object -First 5|ForEach-Object{($_.Groups[1].Value -replace '<[^>]+>','').Trim()}) -join "`n"; if(-not $out){$out="(no results)"} } catch { $out="Search error: $_" }
+                if(-not $Quiet){Write-Host $out -ForegroundColor DarkGray}
+                $cmdOutputs += "[search: $($block.data)]`n$out"
+            }
+            elseif ($block.type -eq 'read') {
                 Write-Host "┌─ 📖 read: $($block.data)" -ForegroundColor Yellow
                 $resolved = if([IO.Path]::IsPathRooted($block.data)){$block.data}else{Join-Path(Get-Location)$block.data}
                 try { $out=(Get-Content $resolved -ErrorAction Stop|ForEach-Object -Begin{$i=1} -Process{"{0,4} | {1}" -f $i++,$_}) -join "`n" } catch { $out="Error: $_" }
@@ -101,6 +109,24 @@ function Invoke-ShellamaAgent {
                 Set-Content -Path $resolved -Value $content -Encoding UTF8 -NoNewline
                 Write-Host "Wrote $lc lines to $resolved" -ForegroundColor DarkGray
                 $cmdOutputs += "[write $path]`nWrote $lc lines to $resolved"
+            } elseif ($block.type -eq 'edit') {
+                $path=$block.data[0]; $editContent=$block.data[1]
+                $edits=[regex]::Matches($editContent,'<<<< SEARCH\n(.*?)\n====\n(.*?)\n>>>> END','Singleline')
+                Write-Host "┌─ 📝 edit: $path ($($edits.Count) change$(if($edits.Count-ne 1){'s'}))" -ForegroundColor Yellow
+                if (-not $Quiet) {
+                    foreach($e in ($edits|Select-Object -First 3)){Write-Host "  - $($e.Groups[1].Value.Split("`n")[0].Substring(0,[math]::Min(60,$e.Groups[1].Value.Split("`n")[0].Length)))" -ForegroundColor DarkGray; Write-Host "  + $($e.Groups[2].Value.Split("`n")[0].Substring(0,[math]::Min(60,$e.Groups[2].Value.Split("`n")[0].Length)))" -ForegroundColor DarkGray}
+                    $answer = Read-Host "└─ Apply? [y/N/q]"
+                    if($answer -eq 'q'){return}
+                    if($answer -ne 'y'){$cmdOutputs += "[edit $path]`n(skipped)"; Write-Host "   (skipped)" -ForegroundColor DarkGray; continue}
+                }
+                $resolved = if([IO.Path]::IsPathRooted($path)){$path}else{Join-Path(Get-Location)$path}
+                try{$orig=Get-Content $resolved -Raw -ErrorAction Stop}catch{$cmdOutputs += "[edit $path]`nError: $_"; Write-Host "Error: $_" -ForegroundColor Red; continue}
+                $res=$orig; $app=0
+                foreach($e in $edits){$s=$e.Groups[1].Value;$r=$e.Groups[2].Value; if($res.Contains($s)){$res=$res.Remove($res.IndexOf($s),$s.Length).Insert($res.IndexOf($s),$r);$app++}}
+                if($app -eq 0){$cmdOutputs += "[edit $path]`nNo edits matched"; Write-Host "No edits matched" -ForegroundColor Red; continue}
+                Set-Content -Path $resolved -Value $res -Encoding UTF8 -NoNewline
+                Write-Host "Applied $app/$($edits.Count) edits to $resolved" -ForegroundColor DarkGray
+                $cmdOutputs += "[edit $path]`nApplied $app/$($edits.Count) edits"
             } else {
                 $cmd = $block.data
                 $perm = Get-ShellCmdPermission $cmd

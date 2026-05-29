@@ -258,6 +258,27 @@ def context_clear():
     _save_context_paths([])
     print(f"{CYAN}context cleared{RESET}")
 
+# Conversation branching
+_branch_stack = []
+
+def branch_start():
+    """Fork the conversation — saves current conv ID and starts a new branch."""
+    global SESSION_CONV_ID
+    _branch_stack.append(SESSION_CONV_ID)
+    SESSION_CONV_ID = str(_uuid.uuid4())
+    os.environ['SHELLAMA_CONV_ID'] = SESSION_CONV_ID
+    print(f"{CYAN}branched — exploring tangent (,branch back to return){RESET}")
+
+def branch_back():
+    """Return to the main conversation, discarding the branch."""
+    global SESSION_CONV_ID
+    if not _branch_stack:
+        print("shellama: not in a branch", file=sys.stderr)
+        return
+    SESSION_CONV_ID = _branch_stack.pop()
+    os.environ['SHELLAMA_CONV_ID'] = SESSION_CONV_ID
+    print(f"{CYAN}returned to main conversation{RESET}")
+
 CYAN = '\033[36m'
 YELLOW = '\033[33m'
 GRAY = '\033[90m'
@@ -328,7 +349,7 @@ readline.parse_and_bind('tab: complete')
 SYSTEM_PROMPT = """You are an AI assistant running inside a bash shell on {os_info}.
 Current directory: {cwd}
 
-You have three tools available. Use the appropriate fenced block for each:
+You have five tools available. Use the appropriate fenced block for each:
 
 ## 1. Run bash commands
 ```bash
@@ -341,10 +362,27 @@ path/to/file.py
 ```
 You can read multiple files by listing one path per line.
 
-## 3. Write files
+## 3. Write files (create new or replace entire file)
 ```file_write path/to/file.py
 content goes here
 exactly as it should appear in the file
+```
+
+## 4. Edit files (targeted search-and-replace in existing files)
+```file_edit path/to/file.py
+<<<< SEARCH
+exact lines to find
+(must match the file exactly, including whitespace)
+====
+replacement lines
+(what to replace them with)
+>>>> END
+```
+You can include multiple SEARCH/REPLACE blocks in one file_edit to make several changes at once.
+
+## 5. Web search (look up documentation, APIs, error messages)
+```web_search
+your search query here
 ```
 
 You will see the output of each tool, then you can use more tools or give your final answer.
@@ -352,21 +390,22 @@ You will see the output of each tool, then you can use more tools or give your f
 IMPORTANT:
 - Always use tools yourself, never ask the user to do it
 - Use ```file_read instead of cat — it's safer and shows line numbers
-- Use ```file_write instead of echo/tee/heredoc — it handles special characters correctly
+- Use ```file_edit for modifying existing files — it's safer than rewriting the whole file
+- Use ```file_write only for creating new files or complete rewrites
+- Use ```web_search when you need to look up docs, APIs, or error messages you're unsure about
 - Use ```bash for everything else (installs, git, running programs, etc.)
-- ONLY use these three block types for actions you want executed
+- ONLY use these five block types for actions you want executed
 - For code examples, use other language tags (```python, ```julia, etc.) or no tag
 - When you have enough info, give your final answer as plain text with no tool blocks
 - Keep commands short and focused
 - If a command fails, try a different approach
-- Never run destructive commands (rm -rf, mkfs, etc.) without the user explicitly asking
-- Prefer file_write over bash for creating/editing files — it's atomic and won't corrupt on special chars"""
+- Never run destructive commands (rm -rf, mkfs, etc.) without the user explicitly asking"""
 
 
 def extract_tool_blocks(text):
-    """Extract all tool blocks (bash, file_read, file_write) from AI response."""
+    """Extract all tool blocks (bash, file_read, file_write, file_edit, web_search) from AI response."""
     blocks = []
-    for m in re.finditer(r'```(bash|file_read|file_write(?:\s+\S+)?)\n(.*?)```', text, re.DOTALL):
+    for m in re.finditer(r'```(bash|file_read|file_write(?:\s+\S+)?|file_edit(?:\s+\S+)?|web_search)\n(.*?)```', text, re.DOTALL):
         tag = m.group(1)
         content = m.group(2).strip()
         if not content:
@@ -378,6 +417,11 @@ def extract_tool_blocks(text):
                 p = line.strip()
                 if p:
                     blocks.append(('file_read', p))
+        elif tag.startswith('file_edit'):
+            path = tag.split(None, 1)[1] if ' ' in tag else ''
+            blocks.append(('file_edit', (path, m.group(2))))
+        elif tag == 'web_search':
+            blocks.append(('web_search', content))
         else:
             # file_write path/to/file
             path = tag.split(None, 1)[1] if ' ' in tag else ''
@@ -418,6 +462,68 @@ def run_file_write(path, content):
         return f"Wrote {lines} lines to {path}"
     except Exception as e:
         return f"Error: {e}"
+
+
+def run_file_edit(path, edit_content):
+    """Apply search-and-replace edits to an existing file."""
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(os.getcwd(), path)
+    try:
+        with open(path, 'r') as f:
+            original = f.read()
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+    # Parse edit blocks: <<<< SEARCH ... ==== ... >>>> END
+    edits = re.findall(r'<<<< SEARCH\n(.*?)\n====\n(.*?)\n>>>> END', edit_content, re.DOTALL)
+    if not edits:
+        return "Error: no valid SEARCH/REPLACE blocks found"
+
+    result = original
+    applied = 0
+    failed = []
+    for search, replace in edits:
+        if search in result:
+            result = result.replace(search, replace, 1)
+            applied += 1
+        else:
+            failed.append(search[:60].replace('\n', '\\n'))
+
+    if applied == 0:
+        return f"Error: none of {len(edits)} edits matched. File unchanged."
+
+    with open(path, 'w') as f:
+        f.write(result)
+
+    msg = f"Applied {applied}/{len(edits)} edits to {path}"
+    if failed:
+        msg += f"\nFailed to match: {'; '.join(failed)}"
+    return msg
+
+
+def run_web_search(query):
+    """Search the web using DuckDuckGo and return text results."""
+    import urllib.parse
+    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    try:
+        resp = _session.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        # Extract result snippets from DDG HTML
+        results = re.findall(r'<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>(.*?)</a>.*?<a class="result__snippet"[^>]*>(.*?)</a>', resp.text, re.DOTALL)
+        if not results:
+            # Fallback: try simpler pattern
+            results = re.findall(r'class="result__a"[^>]*>(.*?)</a>', resp.text)
+            if results:
+                return '\n'.join(re.sub(r'<[^>]+>', '', r) for r in results[:5])
+            return "(no results)"
+        output = []
+        for href, title, snippet in results[:5]:
+            title = re.sub(r'<[^>]+>', '', title).strip()
+            snippet = re.sub(r'<[^>]+>', '', snippet).strip()
+            output.append(f"• {title}\n  {snippet}\n  {href}")
+        return '\n\n'.join(output)
+    except Exception as e:
+        return f"Search error: {e}"
 
 
 # Permission tiers for bash commands
@@ -677,7 +783,7 @@ def ai_agent(query, quiet=False):
 
         if not quiet:
             # Show reasoning text between tool blocks
-            text_parts = re.split(r'```(?:bash|file_read|file_write\s*\S*)\n.*?```', response, flags=re.DOTALL)
+            text_parts = re.split(r'```(?:bash|file_read|file_write\s*\S*|file_edit\s*\S*|web_search)\n.*?```', response, flags=re.DOTALL)
             for part in text_parts:
                 part = part.strip()
                 if part:
@@ -689,7 +795,18 @@ def ai_agent(query, quiet=False):
         for tool_type, tool_data in tool_blocks:
             sys.stderr.write("\n")
 
-            if tool_type == 'file_read':
+            if tool_type == 'web_search':
+                print(f"{YELLOW}┌─ 🔍 search: {tool_data}{RESET}")
+                output = run_web_search(tool_data)
+                if not quiet:
+                    lines = output.splitlines()
+                    preview = '\n'.join(lines[:10])
+                    print(f"{DIM}{preview}{RESET}")
+                    if len(lines) > 10:
+                        print(f"{DIM}   ... ({len(lines)} lines){RESET}")
+                cmd_outputs.append(f"[search: {tool_data}]\n{output}")
+
+            elif tool_type == 'file_read':
                 print(f"{YELLOW}┌─ 📖 read: {tool_data}{RESET}")
                 if not quiet:
                     # Auto-allow reads
@@ -736,6 +853,39 @@ def ai_agent(query, quiet=False):
                 print(f"{DIM}{output}{RESET}")
                 cmd_outputs.append(f"[write {path}]\n{output}")
 
+            elif tool_type == 'file_edit':
+                path, edit_content = tool_data
+                # Parse and show the edits
+                edits = re.findall(r'<<<< SEARCH\n(.*?)\n====\n(.*?)\n>>>> END', edit_content, re.DOTALL)
+                print(f"{YELLOW}┌─ 📝 edit: {path} ({len(edits)} change{'s' if len(edits)!=1 else ''}){RESET}")
+                if not quiet:
+                    for search, replace in edits[:3]:
+                        s_preview = search.splitlines()[0][:60]
+                        r_preview = replace.splitlines()[0][:60] if replace else '(delete)'
+                        print(f"{DIM}  - {s_preview}{RESET}")
+                        print(f"{DIM}  + {r_preview}{RESET}")
+                    if len(edits) > 3:
+                        print(f"{DIM}  ... and {len(edits)-3} more{RESET}")
+                    try:
+                        import termios
+                        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                    except Exception:
+                        pass
+                    try:
+                        answer = input(f"{YELLOW}└─ Apply? [y/N/q] {RESET}").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        print()
+                        return
+                    if answer == 'q':
+                        return
+                    if answer != 'y':
+                        cmd_outputs.append(f"[edit {path}]\n(skipped by user)")
+                        print(f"{GRAY}   (skipped){RESET}")
+                        continue
+                output = run_file_edit(path, edit_content)
+                print(f"{DIM}{output}{RESET}")
+                cmd_outputs.append(f"[edit {path}]\n{output}")
+
             else:  # bash
                 cmd = tool_data
                 perm = _classify_command(cmd)
@@ -779,7 +929,7 @@ def ai_agent(query, quiet=False):
 
         # Feed results back
         results = '\n\n'.join(cmd_outputs)
-        conversation += f"\n\nAssistant: {response}\n\nTool output:\n{results}\n\nContinue. If you have enough information, give your final answer as plain text without any tool blocks (no ```bash, ```file_read, or ```file_write)."
+        conversation += f"\n\nAssistant: {response}\n\nTool output:\n{results}\n\nContinue. If you have enough information, give your final answer as plain text without any tool blocks."
 
         # Auto-compact: if conversation is getting long, summarize older turns
         conversation = _auto_compact(conversation, system, quiet)
@@ -850,6 +1000,57 @@ def ai_simple(endpoint, payload, result_key):
     except requests.exceptions.ConnectionError:
         spinner.stop()
         print(f"shellama: cannot reach {API_URL}", file=sys.stderr)
+    except Exception as e:
+        spinner.stop()
+        print(f"shellama: {e}", file=sys.stderr)
+
+
+def ai_vision(image_path, prompt=''):
+    """Send an image to the AI for analysis (requires multimodal model like llava)."""
+    global session_tokens, session_requests, session_elapsed, last_output
+    import base64
+    path = os.path.expanduser(image_path)
+    if not os.path.isabs(path):
+        path = os.path.join(os.getcwd(), path)
+    if not os.path.exists(path):
+        print(f"shellama: {image_path}: not found", file=sys.stderr)
+        return
+    try:
+        with open(path, 'rb') as f:
+            img_data = base64.b64encode(f.read()).decode()
+    except Exception as e:
+        print(f"shellama: {e}", file=sys.stderr)
+        return
+    if not prompt:
+        prompt = "Describe this image in detail. What do you see?"
+    try:
+        spinner.start()
+        payload = {
+            'message': prompt,
+            'model': MODEL,
+            'images': [img_data],
+            'conversation_id': SESSION_CONV_ID
+        }
+        resp = _session.post(f"{API_URL}/chat", json=payload, timeout=3600)
+        spinner.stop()
+        data = resp.json()
+        if data.get('error'):
+            print(f"shellama: {data['error']}", file=sys.stderr)
+            return
+        session_tokens += data.get('total_tokens', 0)
+        session_requests += 1
+        session_elapsed += data.get('elapsed', 0)
+        result = data.get('response', '')
+        last_output = result
+        _persist_last_output()
+        print(f"{CYAN}{result}{RESET}")
+        print(f"{GRAY}[{data.get('elapsed', 0):.1f}s | {data.get('total_tokens', 0)} tokens | {MODEL}]{RESET}", file=sys.stderr)
+    except KeyboardInterrupt:
+        spinner.stop()
+        try:
+            _session.post(f"{API_URL}/stop-all", timeout=5)
+        except Exception:
+            pass
     except Exception as e:
         spinner.stop()
         print(f"shellama: {e}", file=sys.stderr)
@@ -1276,6 +1477,20 @@ def main():
                     context_clear()
                 else:
                     context_list()
+            elif query == 'branch' or query.startswith('branch '):
+                sub = query[7:].strip() if len(query) > 6 else ''
+                if sub == 'back':
+                    branch_back()
+                else:
+                    branch_start()
+            elif query.startswith('vision '):
+                parts = query[7:].strip().split(None, 1)
+                img = parts[0] if parts else ''
+                prompt = parts[1] if len(parts) > 1 else ''
+                if img:
+                    ai_vision(img, prompt)
+                else:
+                    print("Usage: ,vision <image> [prompt]", file=sys.stderr)
             elif query == 'test' or query.startswith('test '):
                 ai_test(query[5:].strip() or None)
             elif query.startswith('img '):
@@ -1369,6 +1584,19 @@ if __name__ == '__main__':
                 context_clear()
             else:
                 context_list()
+        elif cmd == 'branch':
+            if args == 'back':
+                branch_back()
+            else:
+                branch_start()
+        elif cmd == 'vision':
+            parts = args.split(None, 1)
+            img = parts[0] if parts else ''
+            prompt = parts[1] if len(parts) > 1 else ''
+            if img:
+                ai_vision(img, prompt)
+            else:
+                print("Usage: ,vision <image> [prompt]", file=sys.stderr)
         elif cmd == 'tokens':
             try:
                 since = os.environ.get('SHELLAMA_SESSION_START', '0')

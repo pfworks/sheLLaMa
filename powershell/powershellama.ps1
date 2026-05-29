@@ -28,7 +28,7 @@ $SystemPrompt = @"
 You are an AI assistant running inside a PowerShell session.
 Current directory: {0}
 
-You have three tools available. Use the appropriate fenced block for each:
+You have five tools available. Use the appropriate fenced block for each:
 
 ## 1. Run PowerShell commands
 ``````powershell
@@ -40,25 +40,37 @@ Get-ChildItem
 path/to/file.ps1
 ``````
 
-## 3. Write files
+## 3. Write files (create new or replace entire file)
 ``````file_write path/to/file.ps1
 content goes here
 ``````
 
-You will see the output of each tool, then you can use more tools or give your final answer.
+## 4. Edit files (targeted search-and-replace in existing files)
+``````file_edit path/to/file.ps1
+<<<< SEARCH
+exact lines to find
+====
+replacement lines
+>>>> END
+``````
+
+## 5. Web search
+``````web_search
+your search query here
+``````
 
 IMPORTANT:
-- Always use tools yourself, never ask the user to do it
 - Use ``````file_read instead of Get-Content for reading files
-- Use ``````file_write instead of Set-Content for creating/editing files
+- Use ``````file_edit for modifying existing files — safer than rewriting
+- Use ``````file_write only for creating new files or complete rewrites
+- Use ``````web_search when you need to look up docs, APIs, or error messages
 - Use ``````powershell for everything else
-- ONLY use these three block types for actions you want executed
+- ONLY use these five block types for actions you want executed
 - For code examples, use other language tags or no tag
 - When you have enough info, give your final answer as plain text with no tool blocks
 - Keep commands short and focused
 - If a command fails, try a different approach
-- Never run destructive commands (Remove-Item -Recurse -Force, Format-Volume, etc.) without the user explicitly asking
-- Prefer file_write over powershell for creating/editing files
+- Never run destructive commands without the user explicitly asking
 "@
 
 function Show-Banner {
@@ -171,6 +183,25 @@ function Invoke-FileWrite {
         $lineCount = ($Content.Split("`n")).Count
         return "Wrote $lineCount lines to $resolved"
     } catch { return "Error: $_" }
+}
+
+function Invoke-FileEdit {
+    param([string]$Path, [string]$EditContent)
+    $resolved = if ([IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path (Get-Location) $Path }
+    try { $original = Get-Content $resolved -Raw -ErrorAction Stop } catch { return "Error reading ${Path}: $_" }
+    $edits = [regex]::Matches($EditContent, '<<<< SEARCH\n(.*?)\n====\n(.*?)\n>>>> END', 'Singleline')
+    if ($edits.Count -eq 0) { return "Error: no valid SEARCH/REPLACE blocks found" }
+    $result = $original; $applied = 0; $failed = @()
+    foreach ($m in $edits) {
+        $search = $m.Groups[1].Value; $replace = $m.Groups[2].Value
+        if ($result.Contains($search)) { $result = $result.Remove($result.IndexOf($search), $search.Length).Insert($result.IndexOf($search), $replace); $applied++ }
+        else { $failed += $search.Substring(0, [math]::Min(60, $search.Length)) -replace "`n","\\n" }
+    }
+    if ($applied -eq 0) { return "Error: none of $($edits.Count) edits matched. File unchanged." }
+    Set-Content -Path $resolved -Value $result -Encoding UTF8 -NoNewline
+    $msg = "Applied $applied/$($edits.Count) edits to $resolved"
+    if ($failed.Count -gt 0) { $msg += "`nFailed: $($failed -join '; ')" }
+    return $msg
 }
 
 # Permission tiers
@@ -357,7 +388,7 @@ function Invoke-AIAgent {
 
         # Extract all tool blocks
         $toolBlocks = @()
-        foreach ($m in [regex]::Matches($response, '```(powershell|file_read|file_write\s*\S*)\n(.*?)```', 'Singleline')) {
+        foreach ($m in [regex]::Matches($response, '```(powershell|file_read|file_write\s*\S*|file_edit\s*\S*|web_search)\n(.*?)```', 'Singleline')) {
             $tag = $m.Groups[1].Value
             $content = $m.Groups[2].Value
             if ($tag -eq 'powershell') { $toolBlocks += @{type='ps'; data=$content.Trim()} }
@@ -366,6 +397,11 @@ function Invoke-AIAgent {
                     $p = $line.Trim()
                     if ($p) { $toolBlocks += @{type='read'; data=$p} }
                 }
+            } elseif ($tag -match '^file_edit') {
+                $path = if ($tag -match 'file_edit\s+(.+)') { $Matches[1] } else { '' }
+                $toolBlocks += @{type='edit'; data=@($path, $content)}
+            } elseif ($tag -eq 'web_search') {
+                $toolBlocks += @{type='search'; data=$content.Trim()}
             } else {
                 $path = if ($tag -match 'file_write\s+(.+)') { $Matches[1] } else { '' }
                 $toolBlocks += @{type='write'; data=@($path, $content)}
@@ -390,7 +426,19 @@ function Invoke-AIAgent {
         # Execute tool blocks
         $cmdOutputs = @()
         foreach ($block in $toolBlocks) {
-            if ($block.type -eq 'read') {
+            if ($block.type -eq 'search') {
+                Write-Host "${YELLOW}┌─ 🔍 search: $($block.data)${RESET}"
+                try {
+                    $q = [uri]::EscapeDataString($block.data)
+                    $html = Invoke-WebRequest -Uri "https://html.duckduckgo.com/html/?q=$q" -UserAgent 'Mozilla/5.0' -TimeoutSec 10 -UseBasicParsing
+                    $matches2 = [regex]::Matches($html.Content, 'class="result__a"[^>]*>(.*?)</a>')
+                    $out = ($matches2 | Select-Object -First 5 | ForEach-Object { ($_.Groups[1].Value -replace '<[^>]+>','').Trim() }) -join "`n"
+                    if (-not $out) { $out = "(no results)" }
+                } catch { $out = "Search error: $_" }
+                if (-not $IsQuiet) { Write-Host "${DIM}$out${RESET}" }
+                $cmdOutputs += "[search: $($block.data)]`n$out"
+            }
+            elseif ($block.type -eq 'read') {
                 Write-Host "${YELLOW}┌─ 📖 read: $($block.data)${RESET}"
                 $output = Invoke-FileRead $block.data
                 $lines = $output.Split("`n")
@@ -413,6 +461,24 @@ function Invoke-AIAgent {
                 $output = Invoke-FileWrite $path $content
                 Write-Host "${DIM}$output${RESET}"
                 $cmdOutputs += "[write $path]`n$output"
+            }
+            elseif ($block.type -eq 'edit') {
+                $path = $block.data[0]; $editContent = $block.data[1]
+                $edits = [regex]::Matches($editContent, '<<<< SEARCH\n(.*?)\n====\n(.*?)\n>>>> END', 'Singleline')
+                Write-Host "${YELLOW}┌─ 📝 edit: $path ($($edits.Count) change$(if($edits.Count -ne 1){'s'}))${RESET}"
+                if (-not $IsQuiet) {
+                    foreach ($e in ($edits | Select-Object -First 3)) {
+                        $sp = ($e.Groups[1].Value.Split("`n")[0]).Substring(0, [math]::Min(60, $e.Groups[1].Value.Split("`n")[0].Length))
+                        $rp = ($e.Groups[2].Value.Split("`n")[0]).Substring(0, [math]::Min(60, $e.Groups[2].Value.Split("`n")[0].Length))
+                        Write-Host "${DIM}  - $sp${RESET}"; Write-Host "${DIM}  + $rp${RESET}"
+                    }
+                    $answer = Read-Host "${YELLOW}└─ Apply? [y/N/q]${RESET}"
+                    if ($answer -eq 'q') { return }
+                    if ($answer -ne 'y') { $cmdOutputs += "[edit $path]`n(skipped)"; Write-Host "${GRAY}   (skipped)${RESET}"; continue }
+                }
+                $output = Invoke-FileEdit $path $editContent
+                Write-Host "${DIM}$output${RESET}"
+                $cmdOutputs += "[edit $path]`n$output"
             }
             else { # powershell
                 $cmd = $block.data
