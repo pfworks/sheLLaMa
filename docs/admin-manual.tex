@@ -1,0 +1,454 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!70!black},
+}
+
+\pagestyle{fancy}
+\fancyhead[L]{sheLLaMa Admin Manual}
+\fancyhead[R]{\thepage}
+\fancyfoot{}
+
+\title{\textbf{sheLLaMa Admin Manual}\\[0.5em]\large Deployment, Configuration \& Operations}
+\author{Version 1.0 --- May 2026}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+%======================================================================
+\section{Architecture Overview}
+
+\begin{verbatim}
+Clients --> Frontend (:5000) --> Backend Farm
+                                  |-- Backend 1 (:5000)
+                                  |-- Backend 2 (:5000)
+                                  |-- Backend N (:5000)
+External tools --> /v1/chat/completions (OpenAI-compatible)
+\end{verbatim}
+
+\begin{itemize}
+  \item \textbf{Backend} (\texttt{backend/app.py}) --- Ollama worker, task queue, cloud fallback, image generation subprocess
+  \item \textbf{Frontend} (\texttt{frontend/app-distributed.py}) --- Load balancer, routing, caching, auth, rate limiting, health checks, webhooks, admin console
+  \item \textbf{Clients} --- Bash CLI, PowerShell CLI, integrations, GUIs, REST API consumers
+\end{itemize}
+
+%======================================================================
+\section{System Requirements}
+
+\subsection{Backend Server}
+\begin{longtable}{p{3cm}p{2cm}p{2cm}p{2cm}p{5cm}}
+\toprule
+\textbf{Tier} & \textbf{CPU} & \textbf{RAM} & \textbf{Storage} & \textbf{Models} \\
+\midrule
+Minimum & 8 cores & 16GB & 50GB & 7B (30--60s/response) \\
+Recommended & 16 cores & 32GB & 100GB & 13B--14B (1--3min/response) \\
+Large & 32+ cores & 64GB+ & 200GB & 32B+ (not recommended for CPU) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Frontend Server}
+4 cores, 8GB RAM, 20GB storage.
+
+%======================================================================
+\section{Deployment}
+
+\subsection{Quick Start (Single Server)}
+\begin{lstlisting}[language=bash]
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5-coder:7b
+
+# Clone and run
+git clone https://github.com/pfworks/sheLLaMa.git
+cd shellama
+python3 -m venv venv && source venv/bin/activate
+pip install flask ollama pyyaml requests psutil
+python backend/app.py
+\end{lstlisting}
+
+\subsection{Distributed Deployment (Ansible)}
+\begin{lstlisting}[language=bash]
+cp deploy/inventory.ini.example inventory.ini
+cp deploy/inventory-frontend.ini.example inventory-frontend.ini
+cp deploy/backends.json.example backends.json
+# Edit each file with your server details
+
+ansible-playbook -i inventory.ini deploy/deploy.yml
+ansible-playbook -i inventory-frontend.ini deploy/deploy-frontend.yml
+\end{lstlisting}
+
+\subsection{Manual Deployment}
+\begin{lstlisting}[language=bash]
+# Frontend
+scp frontend/app-distributed.py root@frontend:/usr/local/bin/
+scp shared/*.py root@frontend:/usr/local/shared/
+scp frontend/web/*.html root@frontend:/export/html/
+ssh root@frontend "systemctl restart ansible-ollama-frontend"
+
+# Backend
+scp backend/app.py root@backend:/usr/local/bin/
+scp shared/*.py root@backend:/usr/local/shared/
+ssh root@backend "systemctl restart ansible-ollama"
+\end{lstlisting}
+
+\subsection{backends.json}
+\begin{lstlisting}[language=bash]
+{
+  "backends": [
+    {"url": "http://192.168.1.230:5000", "weight": 10,
+     "max_model": "qwen2.5-coder:7b"},
+    {"url": "http://192.168.1.233:5000", "weight": 10,
+     "max_model": "qwen2.5-coder:14b"}
+  ]
+}
+\end{lstlisting}
+Higher weight = higher priority. Score = \texttt{queue\_size - (weight * 0.1)}, lowest wins.
+
+%======================================================================
+\section{Admin Console}
+
+Access at \texttt{http://frontend:5000} (redirects to \texttt{/status}).
+
+\begin{longtable}{p{3cm}p{3cm}p{8cm}}
+\toprule
+\textbf{Page} & \textbf{URL} & \textbf{Description} \\
+\midrule
+Status & \texttt{/status} & Total requests, tokens, active backends, queue, fallback toggle \\
+Backends & \texttt{/backends} & Per-backend: online/offline, CPU/RAM, weight, models, active task \\
+Stats & \texttt{/stats} & Charts: queue size and token usage over time \\
+Costs & \texttt{/costs} & Cloud cost tracking by time range, fallback spend \\
+Cloud Usage & \texttt{/cloud-usage} & Per-IP and per-API-key cost breakdown \\
+Settings & \texttt{/settings} & Model aliases, toggles, webhooks, command permissions \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{Command Permissions}
+
+The agentic shell uses three permission tiers for commands:
+
+\begin{longtable}{p{3cm}p{3cm}p{7.5cm}}
+\toprule
+\textbf{Tier} & \textbf{Behavior} & \textbf{Examples} \\
+\midrule
+Allow & Auto-run & ls, cat, grep, git status, curl, ps, echo \\
+Prompt & Asks user & pip install, python3, mkdir, git commit \\
+Block & Always refused & rm -rf /, mkfs, git push --force, fork bombs \\
+\bottomrule
+\end{longtable}
+
+\subsection{Managing Permissions}
+
+\textbf{Via Settings page:} Navigate to \texttt{/settings} $\rightarrow$ Command Permissions.
+\begin{itemize}
+  \item \textbf{Auto-Allowed Patterns}: editable regex list. Add/remove freely.
+  \item \textbf{Blocked --- Built-in}: immutable safety rules. Cannot be removed.
+  \item \textbf{Blocked --- Custom}: admin-added block rules. Can be removed.
+\end{itemize}
+
+\textbf{Via API:}
+\begin{lstlisting}[language=bash]
+# Get current permissions
+curl http://frontend:5000/api/permissions
+
+# Add an allow pattern
+curl -X POST http://frontend:5000/api/permissions \
+  -H "Content-Type: application/json" \
+  -d '{"add_allowed": "^npm\\s"}'
+
+# Add a custom block pattern
+curl -X POST http://frontend:5000/api/permissions \
+  -H "Content-Type: application/json" \
+  -d '{"add_blocked": "dangerous_script\\.sh"}'
+
+# Remove a custom block (built-in blocks cannot be removed)
+curl -X POST http://frontend:5000/api/permissions \
+  -H "Content-Type: application/json" \
+  -d '{"remove_blocked": "dangerous_script\\.sh"}'
+\end{lstlisting}
+
+The CLI fetches permissions from the server on startup (2s timeout, falls back to hardcoded defaults if unreachable).
+
+%======================================================================
+\section{Authentication}
+
+Optional---disabled when \texttt{/etc/shellama/auth.json} doesn't exist.
+
+\subsection{API Keys}
+\begin{lstlisting}[language=bash]
+# Client usage
+export SHELLAMA_API_KEY=sk-your-key
+# Or header: X-API-Key: sk-your-key
+\end{lstlisting}
+
+\subsection{SSO (OIDC)}
+Supports Keycloak, Azure AD, Authentik. Configure in \texttt{auth.json}:
+\begin{lstlisting}[language=bash]
+cp deploy/auth.json.example /etc/shellama/auth.json
+# Edit with your SSO provider details
+\end{lstlisting}
+
+\subsection{Roles}
+\begin{longtable}{p{2cm}p{3cm}p{3cm}p{3cm}p{2.5cm}}
+\toprule
+\textbf{Role} & \textbf{API Access} & \textbf{Web UI} & \textbf{Models} & \textbf{Cloud} \\
+\midrule
+admin & All endpoints & Full (modify) & All & Yes \\
+user & Chat, gen, explain & View only & Configured & Configurable \\
+viewer & Read-only & View only & None & No \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{Cloud Fallback}
+
+When local models produce poor output, requests can automatically retry via cloud.
+
+\subsection{OpenRouter (Cloud)}
+\begin{lstlisting}[language=bash]
+# On each backend (systemd override):
+Environment="OPENROUTER_API_KEY=sk-or-v1-your-key"
+Environment="OPENROUTER_MODEL=anthropic/claude-3.5-sonnet"
+Environment="USE_CLOUD_FALLBACK=true"
+\end{lstlisting}
+
+\subsection{LiteLLM (Self-Hosted)}
+\begin{lstlisting}[language=bash]
+Environment="OPENROUTER_API_KEY=sk-anything"
+Environment="OPENROUTER_MODEL=fallback"
+Environment="OPENROUTER_URL=http://litellm-host:4000/v1/chat/completions"
+Environment="USE_CLOUD_FALLBACK=true"
+\end{lstlisting}
+
+\subsection{Auto-Fallback Mode}
+Toggle via Status page or API:
+\begin{lstlisting}[language=bash]
+curl -X POST http://frontend:5000/auto-fallback \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+\end{lstlisting}
+When enabled, poor local responses auto-retry via cloud without client confirmation.
+
+%======================================================================
+\section{Load Balancing}
+
+\begin{itemize}
+  \item Weighted routing: score = \texttt{queue\_size - (weight * 0.1)}, lowest wins
+  \item Model size filtering: requested model must be $\leq$ backend's \texttt{max\_model}
+  \item Multi-file analysis runs in parallel across backends
+  \item Health checks every 30s; 3 consecutive failures $\rightarrow$ unhealthy (skipped)
+  \item Auto-recovery when backend responds again
+  \item Retry up to 2x on different backends on failure
+\end{itemize}
+
+%======================================================================
+\section{Rate Limiting \& Budgets}
+
+Per-key configuration in \texttt{auth.json}:
+\begin{lstlisting}[language=bash]
+"api_keys": {
+  "sk-team-key": {
+    "name": "team",
+    "role": "user",
+    "rate_limit": {"rpm": 30, "tpd": 500000},
+    "budget": {"max_daily": 5.00}
+  }
+}
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{rpm}: requests per minute
+  \item \texttt{tpd}: tokens per day
+  \item \texttt{budget.max\_daily}: max cloud fallback spend per day (USD)
+  \item Budget warning webhook fires at 80\%
+  \item Returns HTTP 429 when exceeded
+\end{itemize}
+
+%======================================================================
+\section{Prompt Caching}
+
+\begin{itemize}
+  \item Key: SHA256(endpoint + model + content)
+  \item TTL: 5 minutes (configurable via \texttt{SHELLAMA\_CACHE\_TTL}, 0 to disable)
+  \item Max entries: 500
+  \item Skips: conversations, force\_cloud, errors
+  \item Stats tracked: cached\_requests, tokens\_saved
+\end{itemize}
+
+%======================================================================
+\section{OpenAI-Compatible API}
+
+Use sheLLaMa as a drop-in replacement for OpenAI:
+\begin{lstlisting}[language=bash]
+export OPENAI_API_BASE=http://frontend:5000/v1
+export OPENAI_API_KEY=sk-your-key
+
+curl -X POST http://frontend:5000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-your-key" \
+  -d '{"model": "fast", "messages": [{"role": "user",
+       "content": "Hello"}]}'
+\end{lstlisting}
+
+Works with: Cursor, Continue, Open WebUI, LangChain, any OpenAI client. Model aliases supported (\texttt{fast} $\rightarrow$ \texttt{llama3.2:1b}).
+
+%======================================================================
+\section{TLS \& mTLS}
+
+\subsection{Certificate Management}
+\begin{lstlisting}[language=bash]
+bin/generate-certs.sh init                    # Generate CA
+bin/generate-certs.sh server backend-1 \
+  192.168.1.230,localhost                     # Server cert
+bin/generate-certs.sh client frontend-mtls   # Client cert
+bin/generate-certs.sh list                   # List all certs
+bin/generate-certs.sh revoke backend-1       # Revoke
+\end{lstlisting}
+
+\subsection{Environment Variables}
+\begin{longtable}{p{5cm}p{8.5cm}}
+\toprule
+\textbf{Variable} & \textbf{Description} \\
+\midrule
+\texttt{SHELLAMA\_TLS\_CERT} & Server TLS certificate (enables HTTPS) \\
+\texttt{SHELLAMA\_TLS\_KEY} & Server TLS private key \\
+\texttt{SHELLAMA\_TLS\_CA} & CA cert for client verification (mTLS) \\
+\texttt{SHELLAMA\_BACKEND\_CERT} & Client cert for frontend$\rightarrow$backend mTLS \\
+\texttt{SHELLAMA\_BACKEND\_KEY} & Client key for frontend$\rightarrow$backend mTLS \\
+\texttt{SHELLAMA\_BACKEND\_CA} & CA to verify backend server certs \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{Webhooks}
+
+Events: \texttt{backend\_down}, \texttt{backend\_recovered}, \texttt{budget\_warning}.
+
+Configure via Settings page or API:
+\begin{lstlisting}[language=bash]
+curl -X POST http://frontend:5000/api/webhooks \
+  -H "Content-Type: application/json" \
+  -d '{"add": "https://hooks.example.com/shellama"}'
+\end{lstlisting}
+
+Same event suppressed for 5 minutes (dedup).
+
+%======================================================================
+\section{Cloud Cost Estimation}
+
+sheLLaMa tracks every token and projects costs across 28+ cloud models.
+
+\subsection{Costs Page (/costs)}
+\begin{itemize}
+  \item Time range filtering: day/week/month/year/custom
+  \item Hypothetical costs: what local usage would cost on cloud
+  \item Actual fallback spend: real costs from cloud fallback
+  \item Cached savings: tokens served from cache
+  \item Cheapest/costliest provider highlighted
+\end{itemize}
+
+\subsection{Cloud Usage Page (/cloud-usage)}
+\begin{itemize}
+  \item Per-IP cost breakdown with expandable provider detail
+  \item Per-API-key cost breakdown
+  \item Per-cloud-model usage (fallback only)
+  \item Cost range (cheapest to most expensive) per client
+\end{itemize}
+
+\subsection{Enterprise Comparison}
+\begin{lstlisting}[language=bash]
+curl "http://frontend:5000/enterprise-costs?users=10&days=30"
+\end{lstlisting}
+Compares seat-based subscriptions (Copilot, ChatGPT Team, Claude Team, etc.) vs equivalent per-token API spend.
+
+%======================================================================
+\section{Monitoring \& Operations}
+
+\subsection{Service Management (Linux)}
+\begin{lstlisting}[language=bash]
+sudo systemctl status ansible-ollama          # Backend
+sudo systemctl status ansible-ollama-frontend # Frontend
+sudo journalctl -u ansible-ollama -f          # Logs
+sudo systemctl restart ansible-ollama
+\end{lstlisting}
+
+\subsection{Health Checks}
+\begin{lstlisting}[language=bash]
+curl http://frontend:5000/queue-status   # Aggregate status
+curl http://backend:5000/queue-status    # Single backend
+\end{lstlisting}
+
+\subsection{Reset Counters}
+\begin{lstlisting}[language=bash]
+curl -X POST http://frontend:5000/reset-stats       # Requests/tokens
+curl -X POST http://frontend:5000/reset-cloud-costs # Cost data
+curl -X POST http://frontend:5000/reset-all         # Everything
+\end{lstlisting}
+
+\subsection{Task Timeouts}
+\begin{itemize}
+  \item Default: 1800s (30 min) per task (\texttt{SHELLAMA\_TASK\_TIMEOUT})
+  \item Stale task reaper checks every 10s
+  \item Tasks without heartbeat for 30s are killed
+  \item Frontend$\rightarrow$backend timeout: 3600s (1 hour)
+\end{itemize}
+
+%======================================================================
+\section{Environment Variables (Complete)}
+
+\begin{longtable}{p{5.5cm}p{3.5cm}p{5cm}}
+\toprule
+\textbf{Variable} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{SHELLAMA\_API} & 192.168.1.229:5000 & API endpoint (clients) \\
+\texttt{SHELLAMA\_MODEL} & auto & Default model \\
+\texttt{SHELLAMA\_API\_KEY} & (empty) & API key \\
+\texttt{SHELLAMA\_TASK\_TIMEOUT} & 1800 & Max task runtime (backend) \\
+\texttt{SHELLAMA\_COMPACT\_THRESHOLD} & 24000 & Auto-compact threshold \\
+\texttt{SHELLAMA\_CACHE\_TTL} & 300 & Prompt cache TTL (0=off) \\
+\texttt{SHELLAMA\_AUTH\_FILE} & /etc/shellama/auth.json & Auth config \\
+\texttt{SHELLAMA\_WEBHOOK\_URL} & (empty) & Webhook URL \\
+\texttt{SHELLAMA\_CERT\_DIR} & /etc/shellama/pki & PKI directory \\
+\texttt{USE\_CLOUD\_FALLBACK} & false & Enable cloud fallback \\
+\texttt{OPENROUTER\_API\_KEY} & (empty) & Cloud fallback key \\
+\texttt{OPENROUTER\_MODEL} & claude-3.5-sonnet & Cloud fallback model \\
+\texttt{OPENROUTER\_URL} & openrouter.ai/... & Cloud endpoint \\
+\texttt{AI\_IMAGE\_MODEL} & sdxl-turbo & Image model \\
+\texttt{SHELLAMA\_DOWNLOAD\_DIR} & (current dir) & Image save dir \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{Troubleshooting}
+
+\textbf{No backends available} --- Check \texttt{backends.json}; \texttt{max\_model} must match or exceed the requested model.
+
+\textbf{Timeouts} --- Frontend$\rightarrow$backend timeout is 3600s. If tasks exceed \texttt{SHELLAMA\_TASK\_TIMEOUT}, the reaper kills them.
+
+\textbf{Slow responses} --- Use smaller models. Add more backends. Check \texttt{htop}.
+
+\textbf{Image generation slow} --- Use \texttt{sd-turbo} instead of \texttt{sdxl-turbo}. First request loads model (\~{}90s), subsequent are faster.
+
+\textbf{Permission endpoint returns 403} --- Cannot remove built-in safety rules. Only custom block rules can be removed.
+
+\textbf{Cloud fallback not triggering} --- Verify \texttt{USE\_CLOUD\_FALLBACK=true} on backends. Check \texttt{OPENROUTER\_API\_KEY} is set.
+
+\end{document}

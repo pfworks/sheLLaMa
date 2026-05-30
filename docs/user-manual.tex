@@ -1,0 +1,290 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!50!black},
+  stringstyle=\color{red!70!black},
+}
+
+\pagestyle{fancy}
+\fancyhead[L]{sheLLaMa User Manual}
+\fancyhead[R]{\thepage}
+\fancyfoot{}
+
+\title{\textbf{sheLLaMa User Manual}\\[0.5em]\large AI-Powered Agentic Shell for Bash \& PowerShell}
+\author{Version 1.0 --- May 2026}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+%======================================================================
+\section{Introduction}
+
+sheLLaMa is an AI-powered agentic shell that integrates directly into bash and PowerShell. The AI reads files, writes code, runs commands, searches the web, and iterates---with permission tiers, conversation memory, and context awareness.
+
+\subsection{Key Capabilities}
+\begin{itemize}
+  \item Chat with AI using conversation memory
+  \item Agentic mode: AI proposes and executes commands iteratively (up to 10 rounds)
+  \item Structured file tools: read, write, and diff-based edit
+  \item Web search for documentation and error messages
+  \item Image/vision analysis with multimodal models
+  \item Code generation, explanation, and multi-file analysis
+  \item Shell-to-Ansible playbook conversion
+  \item Text-to-image generation (Stable Diffusion)
+  \item Conversation save/load, branching, and auto-compaction
+  \item Fully offline after initial model pull
+\end{itemize}
+
+%======================================================================
+\section{Installation}
+
+\subsection{Prerequisites}
+\begin{itemize}
+  \item Python 3.8+ (for bash CLI)
+  \item PowerShell 5.1+ (for PowerShell clients)
+  \item Access to a sheLLaMa backend server (or run your own)
+\end{itemize}
+
+\subsection{Bash CLI (Linux/macOS)}
+\begin{lstlisting}[language=bash]
+git clone https://github.com/pfworks/sheLLaMa.git
+cd shellama
+export SHELLAMA_API=http://your-server:5000
+./cli/shellama
+\end{lstlisting}
+
+\subsection{Bash Integration (Recommended)}
+Add to your \texttt{.bashrc}:
+\begin{lstlisting}[language=bash]
+source /path/to/shellama/cli/shellama.bash
+\end{lstlisting}
+This gives you all \texttt{,} commands in your real bash session with full job control, history, tab completion, and aliases.
+
+\subsection{PowerShell CLI (Windows)}
+\begin{lstlisting}[language=bash]
+$env:SHELLAMA_API = "http://your-server:5000"
+.\powershell\powershellama.ps1
+\end{lstlisting}
+
+\subsection{PowerShell Integration (Recommended)}
+Add to your \texttt{\$PROFILE}:
+\begin{lstlisting}[language=bash]
+. C:\path\to\shellama\powershell\shellama.ps1
+\end{lstlisting}
+
+%======================================================================
+\section{Commands Reference}
+
+All commands are prefixed with \texttt{,} (comma). Regular shell commands work normally.
+
+\subsection{Chat \& Agentic Mode}
+
+\begin{longtable}{p{4.5cm}p{9cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{, <prompt>} & Chat with AI (conversation memory, no command execution) \\
+\texttt{,do <prompt>} & Agentic mode---AI runs commands, asks \texttt{Run? [y/N/q]} \\
+\texttt{,, <prompt>} & Quiet mode---output only, no confirmations \\
+\bottomrule
+\end{longtable}
+
+\subsection{Code \& File Operations}
+
+\begin{longtable}{p{4.5cm}p{9cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{,explain <file>} & Explain any file (auto-detects playbook vs code) \\
+\texttt{,generate <desc>} & Generate code or Ansible playbook from description \\
+\texttt{,analyze <paths>} & Analyze files and/or directories recursively \\
+\texttt{,save <file>} & Save last AI output to a file (strips markdown fences) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Image \& Vision}
+
+\begin{longtable}{p{5cm}p{8.5cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{,img <prompt>} & Generate image from text (Stable Diffusion) \\
+\texttt{,vision <image> [prompt]} & Send image to AI for analysis (requires multimodal model) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Session Management}
+
+\begin{longtable}{p{5cm}p{8.5cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{,session save [name]} & Save conversation to \texttt{\~{}/.shellama/sessions/} \\
+\texttt{,session load [name]} & Load a saved session (interactive picker or by name) \\
+\texttt{,session list} & List all saved sessions \\
+\bottomrule
+\end{longtable}
+
+\subsection{Context Files}
+
+Context files are attached to every prompt automatically, giving the AI persistent awareness of your project.
+
+\begin{longtable}{p{5cm}p{8.5cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{,context add <file>} & Attach file to every prompt \\
+\texttt{,context remove <file>} & Remove file from context \\
+\texttt{,context list} & Show attached files with sizes \\
+\texttt{,context clear} & Remove all context files \\
+\bottomrule
+\end{longtable}
+
+\subsection{Conversation Branching}
+
+\begin{longtable}{p{4.5cm}p{9cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{,branch} & Fork conversation to explore a tangent \\
+\texttt{,branch back} & Return to main conversation (discards branch) \\
+\bottomrule
+\end{longtable}
+
+Branching is stack-based---you can nest multiple branches.
+
+\subsection{Utilities}
+
+\begin{longtable}{p{5cm}p{8.5cm}}
+\toprule
+\textbf{Command} & \textbf{Description} \\
+\midrule
+\texttt{,models} & List and select model \\
+\texttt{,test [model|all]} & Benchmark models (speed, tokens, cloud cost) \\
+\texttt{,tokens} & Show session usage stats \\
+\texttt{,quiet} & Toggle quiet mode \\
+\texttt{,list} / \texttt{,help} & Show available commands \\
+\texttt{,exit} & Unload sheLLaMa (integration mode only) \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{AI Tools (Agentic Mode)}
+
+When you use \texttt{,do} or \texttt{,} (in the standalone CLI), the AI has access to five structured tools:
+
+\subsection{bash / powershell}
+Runs shell commands. Permission tiers apply:
+\begin{itemize}
+  \item \textbf{Auto-allowed}: read-only commands (ls, cat, grep, git status, curl, etc.)
+  \item \textbf{Prompted}: everything else---asks \texttt{Run? [y/N/q]}
+  \item \textbf{Blocked}: destructive commands (rm -rf /, mkfs, git push --force, etc.)---always refused
+\end{itemize}
+
+\subsection{file\_read}
+Reads files and returns numbered lines. Auto-allowed (no confirmation needed). Safer than \texttt{cat} because it handles binary detection and truncation.
+
+\subsection{file\_write}
+Creates new files or replaces entire file content. Shows a preview of the first 5 lines and asks \texttt{Write? [y/N/q]}.
+
+\subsection{file\_edit}
+Targeted search-and-replace in existing files using the format:
+\begin{lstlisting}
+<<<< SEARCH
+exact lines to find
+====
+replacement lines
+>>>> END
+\end{lstlisting}
+Multiple edits can be applied in one block. Shows a diff preview and asks \texttt{Apply? [y/N/q]}. Reports which edits matched and which failed.
+
+\subsection{web\_search}
+Searches DuckDuckGo for documentation, APIs, and error messages. Auto-allowed. Returns top 5 results with titles and snippets.
+
+%======================================================================
+\section{Auto-Compaction}
+
+When a conversation exceeds 24,000 characters (\~{}6,000 tokens), older turns are automatically summarized by the LLM. The system prompt and last 2 exchanges are kept intact. A message \texttt{[compacted: 28000 → 12000 chars]} confirms when this happens.
+
+Configure the threshold:
+\begin{lstlisting}[language=bash]
+export SHELLAMA_COMPACT_THRESHOLD=32000  # higher = more context before compacting
+\end{lstlisting}
+
+%======================================================================
+\section{Configuration}
+
+\subsection{Environment Variables}
+
+\begin{longtable}{p{5cm}p{3cm}p{6cm}}
+\toprule
+\textbf{Variable} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{SHELLAMA\_API} & \texttt{http://192.168.1.229:5000} & API endpoint \\
+\texttt{SHELLAMA\_MODEL} & \texttt{auto} & Default model \\
+\texttt{SHELLAMA\_API\_KEY} & (empty) & API key for authentication \\
+\texttt{AI\_IMAGE\_MODEL} & \texttt{sdxl-turbo} & Image generation model \\
+\texttt{SHELLAMA\_COMPACT\_THRESHOLD} & \texttt{24000} & Auto-compact at this char count \\
+\texttt{SHELLAMA\_DOWNLOAD\_DIR} & (current dir) & Save directory for images \\
+\texttt{AI\_QUIET} & \texttt{false} & Start in quiet mode \\
+\texttt{AI\_PS1} & (bash PS1) & Custom prompt (bash CLI only) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Recommended Models}
+
+\begin{longtable}{p{4.5cm}p{3cm}p{6cm}}
+\toprule
+\textbf{Model} & \textbf{Response Time} & \textbf{Notes} \\
+\midrule
+\texttt{qwen2.5-coder:3b} & 10--30s & Fast, decent quality \\
+\texttt{qwen2.5-coder:7b} & 30--60s & Best balance \\
+\texttt{deepseek-coder:6.7b} & 30--60s & Alternative \\
+\texttt{qwen2.5-coder:14b} & 1--3min & Higher quality, needs 32+ cores \\
+\texttt{llava:7b} & 30--60s & Multimodal (for \texttt{,vision}) \\
+\bottomrule
+\end{longtable}
+
+%======================================================================
+\section{Tips \& Best Practices}
+
+\begin{enumerate}
+  \item \textbf{Use context files} for project awareness: \texttt{,context add README.md}
+  \item \textbf{Use \texttt{,branch}} before trying risky approaches---return with \texttt{,branch back}
+  \item \textbf{Save sessions} before closing terminal: \texttt{,session save myproject}
+  \item \textbf{Use \texttt{,do}} for tasks that need commands; use \texttt{,} for questions
+  \item \textbf{The AI prefers file\_edit} over file\_write for existing files---this is safer
+  \item \textbf{Check \texttt{,tokens}} to monitor usage during long sessions
+\end{enumerate}
+
+%======================================================================
+\section{Troubleshooting}
+
+\textbf{``nothing to save (no AI output yet)''} --- Run an AI command first, then \texttt{,save}.
+
+\textbf{Slow responses} --- Use a smaller model (\texttt{3b} or \texttt{7b}). Check backend load.
+
+\textbf{``cannot reach'' error} --- Verify \texttt{SHELLAMA\_API} is set correctly and the server is running.
+
+\textbf{Permission denied on commands} --- Blocked commands cannot be overridden from the CLI. Ask your admin to add patterns to the allow list via the Settings page.
+
+\textbf{Context too large} --- Remove large files with \texttt{,context remove}. The AI shows total bytes injected per prompt.
+
+\end{document}
