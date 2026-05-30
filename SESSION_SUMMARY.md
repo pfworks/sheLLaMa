@@ -1,10 +1,10 @@
 # sheLLaMa - Session Summary
 
-Last updated: May 28, 2026
+Last updated: May 29, 2026
 
 ## Project Overview
 
-sheLLaMa is a local LLM-powered tool (Ollama backend) for shell→Ansible conversion, code generation/explanation, chat, multi-file analysis, and image generation. Distributed architecture with frontend load balancer and backend workers. Fully offline after initial model pull. Formerly named "ansible-tools" — renamed April 9, 2026.
+sheLLaMa is an AI-powered agentic shell that integrates directly into bash and PowerShell. The AI reads files, writes code, runs commands, searches the web, and iterates — with permission tiers, conversation memory, and context awareness. Supports local LLMs (Ollama), cloud fallback, distributed backends, and runs fully offline after initial model pull. Doubles as a cloud AI cost estimation platform. Formerly named "ansible-tools" — renamed April 9, 2026.
 
 ## Project Structure
 
@@ -94,6 +94,9 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 | `,context remove <file>` | — | Remove file from context |
 | `,context list` | — | Show attached context files |
 | `,context clear` | — | Remove all context files |
+| `,branch` | — | Fork conversation to explore a tangent |
+| `,branch back` | — | Return to main conversation |
+| `,vision <image> [prompt]` | `/chat` (multimodal) | Send image to AI for analysis (requires llava or similar) |
 | `,models` | `/models` | List and select model |
 | `,test [model\|all] [--prompt "..."]` | `/test` | Benchmark models — speed, tokens, cloud cost estimate |
 | `,tokens` | — | Show session usage stats (CLI only) |
@@ -171,7 +174,11 @@ External tools → /v1/chat/completions (OpenAI-compatible)
 ## Key Features
 
 ### Agentic Shell (Kiro-style)
-- **Structured file tools**: AI uses `file_read`, `file_write`, and `bash`/`powershell` blocks instead of raw shell commands for file operations
+- **Structured file tools**: AI uses `file_read`, `file_write`, `file_edit`, and `bash`/`powershell` blocks instead of raw shell commands
+- **Diff-based edits**: `file_edit` tool uses `<<<< SEARCH / ==== / >>>> END` blocks for targeted search-and-replace in existing files
+- **Web search**: AI can search DuckDuckGo via `web_search` tool for docs, APIs, error messages (auto-allowed, no confirmation)
+- **Vision input**: `,vision <image> [prompt]` sends images to multimodal models (llava) for analysis
+- **Conversation branching**: `,branch` forks the conversation to explore alternatives; `,branch back` returns to main (stack-based, supports nesting)
 - **Permission tiers**: read-only commands (ls, cat, grep, git status) auto-run; destructive commands (rm -rf, mkfs, git push --force) are blocked; everything else prompts
 - **Permission management**: editable allow list via `/api/permissions` API and Settings page; immutable block list cannot be modified
 - **Context files**: `~/.shellama/context.json` stores list of files injected into every prompt; managed via `,context add/remove/clear/list`

@@ -56,12 +56,13 @@ Organizations adopting AI face a critical question: what would our workload cost
 
 Cloud AI services charge per token---typically split into input (prompt) and output (completion) tokens. Pricing varies by orders of magnitude: from \$0.035/M tokens (Amazon Nova Micro) to \$75/M tokens (Claude Opus 4 output). For organizations evaluating AI adoption, the question is not whether AI is useful, but whether the cost is justified at their usage volume.
 
-sheLLaMa provides a zero-cost way to answer this question:
+sheLLaMa is an AI-powered agentic shell that integrates directly into bash and PowerShell. The AI reads files, writes code, runs commands, searches the web, and iterates---with permission tiers, conversation memory, and context awareness. It supports local LLMs (Ollama), cloud fallback, and distributed backends. Crucially, it also doubles as a cloud AI cost estimation platform:
 
 \begin{enumerate}
   \item Run your actual AI workloads locally (code generation, chat, analysis, shell automation)
   \item The platform counts every prompt and response token consumed
   \item Real-time cost projections show what the same usage would cost on each cloud provider
+  \item Per-client and per-API-key cost attribution enables team-level budgeting
   \item Benchmarking compares local model quality against cloud alternatives
 \end{enumerate}
 

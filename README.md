@@ -1,6 +1,6 @@
 # sheLLaMa
 
-Local LLM-powered tool for code generation, explanation, shell-to-Ansible conversion, file analysis, chat, and image generation. Agentic shell where the AI can run commands and iterate. Runs completely offline after initial model pull.
+AI-powered agentic shell that integrates directly into bash and PowerShell. The AI reads files, writes code, runs commands, searches the web, and iterates — with permission tiers, conversation memory, and context awareness. Supports local LLMs (Ollama), cloud fallback, distributed backends, and runs fully offline after initial model pull. Doubles as a cloud AI cost estimation platform.
 
 ## Features
 
@@ -15,11 +15,14 @@ Local LLM-powered tool for code generation, explanation, shell-to-Ansible conver
 
 **Agentic Shell:**
 - AI proposes bash/PowerShell commands, executes them (with confirmation), reads output, iterates up to 10 rounds
-- Structured file tools: `file_read` (auto-allowed), `file_write` (preview + confirm), `bash`/`powershell` (tiered permissions)
+- Structured file tools: `file_read` (auto-allowed), `file_write` (preview + confirm), `file_edit` (diff-based search-and-replace), `bash`/`powershell` (tiered permissions)
+- Web search tool: AI can search DuckDuckGo for docs, APIs, and error messages
+- Vision input: send images to multimodal models for analysis (`,vision`)
 - Permission tiers: read-only commands auto-run, destructive commands blocked, everything else prompts
 - Permission management via admin console (Settings page) — editable allow list, immutable block list
 - Context files: attach files that get injected into every prompt automatically
 - Conversation save/load: persist and resume sessions across terminal restarts
+- Conversation branching: fork to explore alternatives, return to main thread
 - Auto-compaction: long conversations are automatically summarized to stay within context limits
 - Quiet mode for scripting (output only, no confirmations)
 - Bash environment snapshot (functions, aliases, variables) inherited by AI commands
@@ -164,6 +167,9 @@ The CLI is a full bash shell with AI integration. Regular commands run in bash. 
 | `,context remove <file>` | Remove file from context |
 | `,context list` | Show attached context files |
 | `,context clear` | Remove all context files |
+| `,branch` | Fork conversation to explore a tangent |
+| `,branch back` | Return to main conversation |
+| `,vision <image> [prompt]` | Send image to AI for analysis (requires multimodal model) |
 | `,models` | List and select model |
 | `,test [model\|all] [--prompt "..."]` | Benchmark models — compare speed, tokens, cloud cost |
 | `,tokens` | Show session usage stats |
@@ -589,3 +595,14 @@ sudo systemctl restart ansible-ollama
 **Optional:** OpenRouter/LiteLLM cloud fallback
 
 **Not required:** All inference, all services, all clients — runs fully offline after model pull.
+
+## Future Work
+
+- **MCP (Model Context Protocol)** — plugin system for external tools (database queries, Jira, custom APIs) without modifying the CLI
+- **Streaming responses** — show tokens as they arrive instead of waiting for full response; reduces perceived latency on 30-60s generations
+- **@ mentions for files** — `@src/app.py explain this` syntax for inline file context without `,context add`
+- **Multi-file awareness** — auto-detect imports/dependencies and include related files in context
+- **Cost budgets per session** — stop after $X of cloud fallback spend to prevent runaway costs
+- **Redis/Valkey backend** — optional persistent storage for usage history, enabling months of granular data and multi-frontend shared state
+- **Voice input** — Whisper integration for dictation
+- **Checkpoints/undo** — git-based snapshots before each file write for rollback

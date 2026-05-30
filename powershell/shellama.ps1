@@ -9,6 +9,10 @@
 #   ,generate <desc>    generate code/playbook
 #   ,analyze <paths>    analyze files/dirs
 #   ,img <prompt>       generate image
+#   ,save <file>        save last AI output
+#   ,session            save/load/list sessions
+#   ,context            manage context files
+#   ,vision <img>       send image to AI
 #   ,test [model|all]   benchmark models
 #   ,models             select model
 #   ,tokens             session usage
