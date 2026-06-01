@@ -1,6 +1,6 @@
 # sheLLaMa - Session Summary
 
-Last updated: May 29, 2026
+Last updated: May 31, 2026
 
 ## Project Overview
 
@@ -46,11 +46,15 @@ shellama/
 │   ├── constants.py           # Cloud pricing, test prompt, model_size()
 │   └── auth.py                # Authentication (API keys + SSO/OIDC)
 ├── docs/                       # Documentation
+│   ├── user-manual.tex           # User manual (LaTeX)
+│   ├── user-manual.pdf           # User manual (PDF, 6 pages)
+│   ├── admin-manual.tex          # Admin manual (LaTeX)
+│   ├── admin-manual.pdf          # Admin manual (PDF, 10 pages)
+│   ├── cloud-cost-estimation.tex # Cost estimation white paper (LaTeX)
+│   ├── cloud-cost-estimation.pdf # Cost estimation white paper (PDF, 12 pages)
 │   ├── cloud-fallback-setup.md   # OpenRouter + LiteLLM guide
 │   ├── cloud-fallback-setup.pdf  # PDF version
 │   ├── cloud-fallback-setup.tex  # LaTeX source
-│   ├── cloud-cost-estimation.tex # Cost estimation white paper (LaTeX)
-│   ├── cloud-cost-estimation.pdf # Cost estimation white paper (PDF)
 │   └── SECURITY_CLEANUP.md
 ├── bin/                        # Certificate management
 │   ├── generate-certs.sh
