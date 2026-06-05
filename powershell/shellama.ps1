@@ -416,6 +416,7 @@ function ,list {
     Write-Host ",models           select model" -ForegroundColor Yellow
     Write-Host ",mode             toggle do/chat" -ForegroundColor Yellow
     Write-Host ",tokens           session usage" -ForegroundColor Yellow
+    Write-Host ",exit             unload sheLLaMa" -ForegroundColor Yellow
 }
 
 function ,help { ,list }

@@ -1329,6 +1329,8 @@ def show_services():
     print(f"  {YELLOW},test{RESET}   - benchmark models (speed, tokens, cost)")
     print(f"  {YELLOW},quiet{RESET}  - toggle quiet mode")
     print(f"  {YELLOW},tokens{RESET} - show session token usage")
+    print(f"  {YELLOW},exit{RESET}   - unload sheLLaMa")
+    print(f"  {YELLOW},exit{RESET}   - exit shellama")
 
 
 def select_model():

@@ -84,6 +84,7 @@ function Show-Banner {
     Write-Host "  ${YELLOW},session${RESET}          save/load sessions   ${YELLOW},context${RESET}          manage context files"
     Write-Host "  ${YELLOW},models${RESET}           select model         ${YELLOW},tokens${RESET}           session usage"
     Write-Host "  ${YELLOW},quiet${RESET}            toggle quiet         ${YELLOW},list${RESET}             all services"
+    Write-Host "  ${YELLOW},exit${RESET}             exit shellama"
     Write-Host ""
 }
 
@@ -569,6 +570,7 @@ function Show-Services {
     Write-Host "  ${YELLOW},analyze${RESET}  <path>  analyze files/dirs   ${YELLOW},img${RESET} <prompt>     generate image"
     Write-Host "  ${YELLOW},list${RESET}             all services         ${YELLOW},models${RESET}           select model"
     Write-Host "  ${YELLOW},mode${RESET}             toggle do/chat       ${YELLOW},quiet${RESET}            toggle quiet"
+    Write-Host "  ${YELLOW},exit${RESET}             exit shellama"
 }
 
 function Select-Model {
