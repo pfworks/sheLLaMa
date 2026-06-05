@@ -1396,6 +1396,8 @@ def main():
         pass
     readline.set_history_length(10000)
 
+    agent_mode = True  # Default: agentic (AI runs commands)
+
     print(f"{CYAN}shellama{RESET} - bash + AI agent")
     print(f"{GRAY}backend: {API_URL} | model: {MODEL}{RESET}")
     print()
@@ -1403,8 +1405,8 @@ def main():
     print(f"  {YELLOW},explain{RESET}  <file>  explain any file     {YELLOW},generate{RESET} <desc>  generate code")
     print(f"  {YELLOW},analyze{RESET}  <path>  analyze files/dirs   {YELLOW},img{RESET} <prompt>     generate image")
     print(f"  {YELLOW},save{RESET}  <filename>  save last output     {YELLOW},test{RESET}             benchmark models")
-    print(f"  {YELLOW},models{RESET}           select model         {YELLOW},list{RESET}             all services")
-    print(f"  {YELLOW},quiet{RESET}            toggle quiet")
+    print(f"  {YELLOW},models{RESET}           select model         {YELLOW},mode{RESET}             toggle do/chat")
+    print(f"  {YELLOW},quiet{RESET}            toggle quiet         {YELLOW},list{RESET}             all services")
     print()
 
     while True:
@@ -1449,6 +1451,10 @@ def main():
                 show_services()
             elif query == 'models':
                 select_model()
+            elif query == 'mode':
+                agent_mode = not agent_mode
+                mode_name = 'do (agentic — AI runs commands)' if agent_mode else 'chat (AI responds only)'
+                print(f"mode: {mode_name}")
             elif query == 'quiet':
                 quiet = not quiet
                 print(f"quiet mode: {'on' if quiet else 'off'}")
@@ -1514,7 +1520,16 @@ def main():
                 else:
                     ai_simple('/generate-code', {'description': desc, 'model': MODEL}, 'code')
             else:
-                ai_agent(query, quiet=quiet)
+                if agent_mode:
+                    ai_agent(query, quiet=quiet)
+                else:
+                    resp, tokens, elapsed, err = ai_chat(query, MODEL)
+                    if err:
+                        print(f"{RED}error: {err}{RESET}", file=sys.stderr)
+                    elif resp:
+                        last_output = resp
+                        _persist_last_output()
+                        print(f"\n{resp}\n")
         else:
             subprocess.run(['bash', '-c', f'source {BASH_ENV} 2>/dev/null; {line}'])
 

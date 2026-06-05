@@ -80,10 +80,10 @@ function Show-Banner {
     Write-Host "  ${YELLOW},${RESET}  <prompt>       agentic chat        ${YELLOW},,${RESET} <prompt>       quiet chat"
     Write-Host "  ${YELLOW},explain${RESET}  <file>  explain any file     ${YELLOW},generate${RESET} <desc>  generate code"
     Write-Host "  ${YELLOW},analyze${RESET}  <path>  analyze files/dirs   ${YELLOW},img${RESET} <prompt>     generate image"
-    Write-Host "  ${YELLOW},save${RESET}  <file>     save last output     ${YELLOW},quiet${RESET}            toggle quiet"
+    Write-Host "  ${YELLOW},save${RESET}  <file>     save last output     ${YELLOW},mode${RESET}             toggle do/chat"
     Write-Host "  ${YELLOW},session${RESET}          save/load sessions   ${YELLOW},context${RESET}          manage context files"
     Write-Host "  ${YELLOW},models${RESET}           select model         ${YELLOW},tokens${RESET}           session usage"
-    Write-Host "  ${YELLOW},list${RESET}             all services"
+    Write-Host "  ${YELLOW},quiet${RESET}            toggle quiet         ${YELLOW},list${RESET}             all services"
     Write-Host ""
 }
 
@@ -568,7 +568,7 @@ function Show-Services {
     Write-Host "  ${YELLOW},explain${RESET}  <file>  explain any file     ${YELLOW},generate${RESET} <desc>  generate code"
     Write-Host "  ${YELLOW},analyze${RESET}  <path>  analyze files/dirs   ${YELLOW},img${RESET} <prompt>     generate image"
     Write-Host "  ${YELLOW},list${RESET}             all services         ${YELLOW},models${RESET}           select model"
-    Write-Host "  ${YELLOW},quiet${RESET}            toggle quiet"
+    Write-Host "  ${YELLOW},mode${RESET}             toggle do/chat       ${YELLOW},quiet${RESET}            toggle quiet"
 }
 
 function Select-Model {
@@ -596,6 +596,7 @@ function Select-Model {
 }
 
 # Main loop
+$script:AgentMode = $true
 Show-Banner
 
 while ($true) {
@@ -618,6 +619,11 @@ while ($true) {
         if ($query -in @('list', 'help')) { Show-Services }
         elseif ($query -eq 'models') { Select-Model }
         elseif ($query -eq 'quiet') { $Quiet = -not $Quiet; Write-Host "quiet mode: $(if($Quiet){'on'}else{'off'})" }
+        elseif ($query -eq 'mode') {
+            $script:AgentMode = -not $script:AgentMode
+            $modeName = if ($script:AgentMode) { "do (agentic - AI runs commands)" } else { "chat (AI responds only)" }
+            Write-Host "mode: $modeName"
+        }
         elseif ($query -eq 'tokens') { Write-Host "${CYAN}Session usage: $($script:SessionRequests) requests | $($script:SessionTokens) tokens | $([math]::Round($script:SessionElapsed,1))s${RESET}" }
         elseif ($query.StartsWith('save ')) {
             $file = $query.Substring(5).Trim()
@@ -656,7 +662,17 @@ while ($true) {
                 Invoke-AISimple -Endpoint "/generate-code" -Payload @{ description = $desc; model = $SHELLAMA_MODEL } -ResultKey "code"
             }
         }
-        else { Invoke-AIAgent -Query $query -IsQuiet $Quiet }
+        else {
+            if ($script:AgentMode) {
+                Invoke-AIAgent -Query $query -IsQuiet $Quiet
+            } else {
+                $resp = Invoke-AIChat -Message $query
+                if ($resp -and $resp.response) {
+                    $script:LastOutput = $resp.response
+                    Write-Host "`n$($resp.response)`n"
+                }
+            }
+        }
     }
     else {
         # Regular PowerShell command

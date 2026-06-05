@@ -263,9 +263,34 @@ function ,session {
     }
 }
 
+# Mode toggle: do (agentic, default) or chat
+$script:ShellamaMode = "do"
+
 # Define , commands as functions
-function , { Invoke-ShellamaAgent -Query ($args -join ' ') }
+function , {
+    $query = $args -join ' '
+    if (-not $query) { Write-Host "Usage: , <prompt>  |  ,mode to toggle (current: $($script:ShellamaMode))"; return }
+    if ($script:ShellamaMode -eq "do") {
+        Invoke-ShellamaAgent -Query $query
+    } else {
+        $resp = Invoke-ShellamaChat -Message $query -Model $script:SHELLAMA_MODEL
+        if ($resp -and $resp.response) {
+            $script:LastOutput = $resp.response
+            Write-Host "`n$($resp.response)`n"
+        }
+    }
+}
 function ,, { Invoke-ShellamaAgent -Query ($args -join ' ') -Quiet }
+
+function ,mode {
+    if ($script:ShellamaMode -eq "chat") {
+        $script:ShellamaMode = "do"
+        Write-Host "mode: do (agentic - AI runs commands)"
+    } else {
+        $script:ShellamaMode = "chat"
+        Write-Host "mode: chat (AI responds only)"
+    }
+}
 
 function ,explain {
     $file = $args[0]
@@ -389,6 +414,7 @@ function ,list {
     Write-Host ",context          manage context files" -ForegroundColor Yellow
     Write-Host ",test [model]     benchmark models" -ForegroundColor Yellow
     Write-Host ",models           select model" -ForegroundColor Yellow
+    Write-Host ",mode             toggle do/chat" -ForegroundColor Yellow
     Write-Host ",tokens           session usage" -ForegroundColor Yellow
 }
 

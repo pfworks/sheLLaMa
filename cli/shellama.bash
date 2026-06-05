@@ -42,19 +42,37 @@ PS1="🔴 ${PS1}"
 
 # Unload sheLLaMa
 ,exit() {
-    unset -f , ,, ,do ,explain ,generate ,analyze ,img ,save ,session ,context ,branch ,vision ,test ,models ,tokens ,list ,help ,exit
+    unset -f , ,, ,do ,mode ,explain ,generate ,analyze ,img ,save ,session ,context ,branch ,vision ,test ,models ,tokens ,list ,help ,exit
+    unset SHELLAMA_MODE
     PS1="$_SHELLAMA_ORIG_PS1"
     unset _SHELLAMA_ORIG_PS1 SHELLAMA_CONV_ID
     echo "sheLLaMa unloaded"
 }
-# Default , is chat (no command execution). Use ,do for agentic mode.
+# Mode toggle: chat (default) or do (agentic)
+SHELLAMA_MODE="${SHELLAMA_MODE:-chat}"
+
+,mode() {
+    if [ "$SHELLAMA_MODE" = "chat" ]; then
+        SHELLAMA_MODE="do"
+        echo "mode: do (agentic — AI runs commands)"
+    else
+        SHELLAMA_MODE="chat"
+        echo "mode: chat (AI responds only)"
+    fi
+}
+
+# Default , dispatches based on current mode.
 ,() {
     if [ $# -eq 0 ]; then
         echo "Usage: , <prompt> or ,<command> <args>"
-        echo "Try: ,list"
+        echo "Try: ,list  |  ,mode to toggle (current: $SHELLAMA_MODE)"
         return
     fi
-    python3 "$SHELLAMA_BIN" quiet "$@"
+    if [ "$SHELLAMA_MODE" = "do" ]; then
+        python3 "$SHELLAMA_BIN" agent "$@"
+    else
+        python3 "$SHELLAMA_BIN" quiet "$@"
+    fi
 }
 
 # Agentic mode (AI runs commands)
