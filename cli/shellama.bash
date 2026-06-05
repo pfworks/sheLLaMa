@@ -19,6 +19,7 @@
 #   ,vision <img>       send image to AI
 #   ,test [model|all]   benchmark models
 #   ,models             select model
+#   ,mode               toggle do/chat mode
 #   ,tokens             session usage
 #   ,list               show commands
 

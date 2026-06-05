@@ -1325,6 +1325,7 @@ def show_services():
         print(f"  {YELLOW},{name}{RESET} {arg} - {desc}")
     print(f"  {YELLOW},,{RESET} <prompt> - quiet chat (output only)")
     print(f"  {YELLOW},models{RESET} - list and select model")
+    print(f"  {YELLOW},mode{RESET}   - toggle do/chat mode")
     print(f"  {YELLOW},test{RESET}   - benchmark models (speed, tokens, cost)")
     print(f"  {YELLOW},quiet{RESET}  - toggle quiet mode")
     print(f"  {YELLOW},tokens{RESET} - show session token usage")
